@@ -1,0 +1,7 @@
+torch
+datasets
+transformers
+peft
+scikit-learn
+tqdm
+Pillow
