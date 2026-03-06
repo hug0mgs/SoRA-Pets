@@ -4,7 +4,7 @@ dataset:
 model:
   name: openai/clip-vit-base-patch32
   lora:
-    enabled: true
+    mode: with_lora
     r: 16
     alpha: 32
     dropout: 0.05

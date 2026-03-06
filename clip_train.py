@@ -15,6 +15,7 @@ from transformers import CLIPModel, CLIPProcessor
 
 
 DEFAULT_CONFIG_PATH = Path("train_config.yml")
+VALID_LORA_MODES = {"with_lora", "without_lora", "both"}
 
 
 def get_device():
@@ -43,6 +44,19 @@ def load_config(config_path):
     if missing_keys:
         missing = ", ".join(sorted(missing_keys))
         raise KeyError(f"Missing required config sections: {missing}")
+
+    lora_config = config["model"].get("lora", {})
+    lora_mode = lora_config.get("mode")
+    if lora_mode is None:
+        if "enabled" in lora_config:
+            lora_mode = "with_lora" if lora_config["enabled"] else "without_lora"
+        else:
+            lora_mode = "with_lora"
+        lora_config["mode"] = lora_mode
+
+    if lora_mode not in VALID_LORA_MODES:
+        expected = ", ".join(sorted(VALID_LORA_MODES))
+        raise ValueError(f"Invalid model.lora.mode: {lora_mode!r}. Expected one of: {expected}")
 
     return config
 
@@ -147,7 +161,7 @@ def build_model(config, num_classes, device):
     clip_model = CLIPModel.from_pretrained(model_config["name"])
     model = CLIPForClassification(clip_model, num_classes)
 
-    if lora_config["enabled"]:
+    if lora_config["mode"] == "with_lora":
         peft_config = LoraConfig(
             r=lora_config["r"],
             lora_alpha=lora_config["alpha"],
@@ -160,6 +174,28 @@ def build_model(config, num_classes, device):
 
     model.to(device)
     return model
+
+
+def resolve_run_modes(config):
+    lora_mode = config["model"]["lora"]["mode"]
+    if lora_mode == "both":
+        return [("with_lora", True), ("without_lora", False)]
+    return [(lora_mode, lora_mode == "with_lora")]
+
+
+def build_run_config(config, use_lora):
+    run_config = yaml.safe_load(yaml.safe_dump(config))
+    run_config["model"]["lora"]["mode"] = "with_lora" if use_lora else "without_lora"
+    return run_config
+
+
+def build_output_path(base_output_path, run_mode, multiple_runs):
+    output_path = Path(base_output_path)
+    if not multiple_runs:
+        return output_path
+
+    suffix = "_with_lora" if run_mode == "with_lora" else "_without_lora"
+    return output_path.with_name(f"{output_path.stem}{suffix}{output_path.suffix}")
 
 
 def build_optimizer(model, config):
@@ -215,6 +251,26 @@ def evaluate(model, loader):
     return accuracy_score(true_labels, preds)
 
 
+def run_training(config, train_loader, eval_loader, class_names, device):
+    run_mode = config["model"]["lora"]["mode"]
+    model = build_model(config, num_classes=len(class_names), device=device)
+    optimizer = build_optimizer(model, config)
+    scheduler = build_scheduler(optimizer, config)
+    total_epochs = config["training"]["epochs"]
+
+    print(f"Starting run: {run_mode}")
+    for epoch in range(total_epochs):
+        train_loss = train_epoch(model, train_loader, optimizer)
+        eval_acc = evaluate(model, eval_loader)
+        scheduler.step()
+        print(
+            f"[{run_mode}] Epoch {epoch + 1}/{total_epochs} - "
+            f"Train Loss: {train_loss:.4f} - Eval Accuracy: {eval_acc * 100:.2f}%"
+        )
+
+    return model
+
+
 def main():
     args = parse_args()
     config = load_config(args.config)
@@ -222,21 +278,19 @@ def main():
 
     processor = CLIPProcessor.from_pretrained(config["model"]["name"])
     train_loader, eval_loader, class_names = build_dataloaders(config, processor, device)
+    run_modes = resolve_run_modes(config)
+    multiple_runs = len(run_modes) > 1
 
-    model = build_model(config, num_classes=len(class_names), device=device)
-    optimizer = build_optimizer(model, config)
-    scheduler = build_scheduler(optimizer, config)
-
-    for epoch in range(config["training"]["epochs"]):
-        train_loss = train_epoch(model, train_loader, optimizer)
-        eval_acc = evaluate(model, eval_loader)
-        scheduler.step()
-        print(
-            f"Epoch {epoch + 1}/{config['training']['epochs']} - "
-            f"Train Loss: {train_loss:.4f} - Eval Accuracy: {eval_acc * 100:.2f}%"
+    for run_mode, use_lora in run_modes:
+        run_config = build_run_config(config, use_lora=use_lora)
+        model = run_training(run_config, train_loader, eval_loader, class_names, device)
+        output_path = build_output_path(
+            config["output"]["weights_path"],
+            run_mode=run_mode,
+            multiple_runs=multiple_runs,
         )
-
-    torch.save(model.state_dict(), config["output"]["weights_path"])
+        torch.save(model.state_dict(), output_path)
+        print(f"Saved weights to {output_path}")
 
 
 if __name__ == "__main__":

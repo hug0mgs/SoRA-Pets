@@ -31,7 +31,7 @@ dataset:
 model:
   name: openai/clip-vit-base-patch32
   lora:
-    enabled: true
+    mode: with_lora
     r: 16
     alpha: 32
     dropout: 0.05
@@ -80,10 +80,25 @@ python3 clip_train.py --config outro_arquivo.yml
 - divide `train` em treino e validação
 - carrega o `CLIPProcessor` e o `CLIPModel`
 - congela o backbone do CLIP
-- aplica LoRA na vision tower quando `model.lora.enabled: true`
+- aplica ou não LoRA conforme `model.lora.mode`
 - treina o head de classificação
 - avalia a acurácia ao fim de cada época
 - salva os pesos finais em `output.weights_path`
+
+## Modos de LoRA
+
+O campo `model.lora.mode` aceita:
+
+- `with_lora`: treina uma vez com LoRA
+- `without_lora`: treina uma vez sem LoRA
+- `both`: executa dois treinos em sequência, um com LoRA e outro sem
+
+Quando o modo for `both`, o script salva:
+
+- `clip_pets_finetuned_with_lora.pth`
+- `clip_pets_finetuned_without_lora.pth`
+
+considerando o `output.weights_path` padrão de `clip_pets_finetuned.pth`.
 
 ## Saída
 
