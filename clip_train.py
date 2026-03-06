@@ -1,7 +1,9 @@
 import argparse
+from pathlib import Path
 
 import torch
 import torch.nn as nn
+import yaml
 from datasets import ClassLabel, load_dataset
 from peft import LoraConfig, get_peft_model
 from sklearn.metrics import accuracy_score
@@ -12,9 +14,7 @@ from tqdm import tqdm
 from transformers import CLIPModel, CLIPProcessor
 
 
-DEFAULT_DATASET = "enterprise-explorers/oxford-pets"
-DEFAULT_MODEL = "openai/clip-vit-base-patch32"
-DEFAULT_OUTPUT = "clip_pets_finetuned.pth"
+DEFAULT_CONFIG_PATH = Path("train_config.yml")
 
 
 def get_device():
@@ -23,23 +23,28 @@ def get_device():
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Fine-tune CLIP vision encoder for classification.")
-    parser.add_argument("--dataset", default=DEFAULT_DATASET, help="Hugging Face dataset name.")
-    parser.add_argument("--model-name", default=DEFAULT_MODEL, help="Pretrained CLIP model name.")
-    parser.add_argument("--output", default=DEFAULT_OUTPUT, help="Path to save the trained weights.")
-    parser.add_argument("--batch-size", type=int, default=32, help="Batch size for train and eval.")
-    parser.add_argument("--epochs", type=int, default=3, help="Number of training epochs.")
-    parser.add_argument("--lr", type=float, default=5e-4, help="Learning rate.")
-    parser.add_argument("--weight-decay", type=float, default=0.01, help="Optimizer weight decay.")
-    parser.add_argument("--scheduler-gamma", type=float, default=0.7, help="StepLR gamma.")
-    parser.add_argument("--scheduler-step-size", type=int, default=1, help="StepLR step size.")
-    parser.add_argument("--test-size", type=float, default=0.2, help="Validation split ratio.")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for train/validation split.")
     parser.add_argument(
-        "--disable-lora",
-        action="store_true",
-        help="Train only the classifier head and keep the CLIP backbone frozen.",
+        "--config",
+        default=str(DEFAULT_CONFIG_PATH),
+        help="Path to the YAML configuration file.",
     )
     return parser.parse_args()
+
+
+def load_config(config_path):
+    with open(config_path, "r", encoding="utf-8") as config_file:
+        config = yaml.safe_load(config_file)
+
+    if not isinstance(config, dict):
+        raise ValueError("The YAML config must define a mapping at the top level.")
+
+    required_keys = {"dataset", "model", "training", "optimizer", "scheduler", "output"}
+    missing_keys = required_keys - config.keys()
+    if missing_keys:
+        missing = ", ".join(sorted(missing_keys))
+        raise KeyError(f"Missing required config sections: {missing}")
+
+    return config
 
 
 def resolve_label_metadata(dataset_split):
@@ -90,14 +95,22 @@ def make_collate_fn(processor, label_to_idx, device):
     return collate_fn
 
 
-def build_dataloaders(dataset_name, batch_size, test_size, seed, processor, device):
-    dataset = load_dataset(dataset_name)
-    split_dataset = dataset["train"].train_test_split(test_size=test_size, shuffle=True, seed=seed)
+def build_dataloaders(config, processor, device):
+    dataset_config = config["dataset"]
+    training_config = config["training"]
+
+    dataset = load_dataset(dataset_config["name"])
+    split_dataset = dataset["train"].train_test_split(
+        test_size=training_config["test_size"],
+        shuffle=True,
+        seed=training_config["seed"],
+    )
     train_dataset = split_dataset["train"]
     eval_dataset = split_dataset["test"]
     class_names, label_to_idx = resolve_label_metadata(dataset["train"])
 
     collate_fn = make_collate_fn(processor, label_to_idx, device)
+    batch_size = training_config["batch_size"]
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     eval_loader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
     return train_loader, eval_loader, class_names
@@ -127,30 +140,48 @@ class CLIPForClassification(nn.Module):
         return {"logits": logits, "loss": loss}
 
 
-def build_model(model_name, num_classes, device, use_lora):
-    clip_model = CLIPModel.from_pretrained(model_name)
+def build_model(config, num_classes, device):
+    model_config = config["model"]
+    lora_config = model_config["lora"]
+
+    clip_model = CLIPModel.from_pretrained(model_config["name"])
     model = CLIPForClassification(clip_model, num_classes)
 
-    if use_lora:
-        lora_config = LoraConfig(
-            r=16,
-            lora_alpha=32,
-            target_modules=["q_proj", "k_proj", "v_proj", "out_proj"],
-            lora_dropout=0.05,
-            bias="none",
+    if lora_config["enabled"]:
+        peft_config = LoraConfig(
+            r=lora_config["r"],
+            lora_alpha=lora_config["alpha"],
+            target_modules=lora_config["target_modules"],
+            lora_dropout=lora_config["dropout"],
+            bias=lora_config["bias"],
         )
-        model.clip.vision_model = get_peft_model(model.clip.vision_model, lora_config)
+        model.clip.vision_model = get_peft_model(model.clip.vision_model, peft_config)
         model.clip.vision_model.print_trainable_parameters()
 
     model.to(device)
     return model
 
 
-def build_optimizer(model, lr, weight_decay):
+def build_optimizer(model, config):
     trainable_params = [param for param in model.parameters() if param.requires_grad]
     if not trainable_params:
         raise ValueError("No trainable parameters found. Check the LoRA and classifier setup.")
-    return AdamW(trainable_params, lr=lr, weight_decay=weight_decay)
+
+    optimizer_config = config["optimizer"]
+    return AdamW(
+        trainable_params,
+        lr=optimizer_config["lr"],
+        weight_decay=optimizer_config["weight_decay"],
+    )
+
+
+def build_scheduler(optimizer, config):
+    scheduler_config = config["scheduler"]
+    return StepLR(
+        optimizer,
+        step_size=scheduler_config["step_size"],
+        gamma=scheduler_config["gamma"],
+    )
 
 
 def train_epoch(model, loader, optimizer):
@@ -186,41 +217,26 @@ def evaluate(model, loader):
 
 def main():
     args = parse_args()
+    config = load_config(args.config)
     device = get_device()
 
-    processor = CLIPProcessor.from_pretrained(args.model_name)
-    train_loader, eval_loader, class_names = build_dataloaders(
-        dataset_name=args.dataset,
-        batch_size=args.batch_size,
-        test_size=args.test_size,
-        seed=args.seed,
-        processor=processor,
-        device=device,
-    )
+    processor = CLIPProcessor.from_pretrained(config["model"]["name"])
+    train_loader, eval_loader, class_names = build_dataloaders(config, processor, device)
 
-    model = build_model(
-        model_name=args.model_name,
-        num_classes=len(class_names),
-        device=device,
-        use_lora=not args.disable_lora,
-    )
-    optimizer = build_optimizer(model, lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = StepLR(
-        optimizer,
-        step_size=args.scheduler_step_size,
-        gamma=args.scheduler_gamma,
-    )
+    model = build_model(config, num_classes=len(class_names), device=device)
+    optimizer = build_optimizer(model, config)
+    scheduler = build_scheduler(optimizer, config)
 
-    for epoch in range(args.epochs):
+    for epoch in range(config["training"]["epochs"]):
         train_loss = train_epoch(model, train_loader, optimizer)
         eval_acc = evaluate(model, eval_loader)
         scheduler.step()
         print(
-            f"Epoch {epoch + 1}/{args.epochs} - "
+            f"Epoch {epoch + 1}/{config['training']['epochs']} - "
             f"Train Loss: {train_loss:.4f} - Eval Accuracy: {eval_acc * 100:.2f}%"
         )
 
-    torch.save(model.state_dict(), args.output)
+    torch.save(model.state_dict(), config["output"]["weights_path"])
 
 
 if __name__ == "__main__":

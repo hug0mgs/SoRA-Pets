@@ -1,0 +1,33 @@
+dataset:
+  name: enterprise-explorers/oxford-pets
+
+model:
+  name: openai/clip-vit-base-patch32
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - out_proj
+
+training:
+  batch_size: 32
+  epochs: 3
+  test_size: 0.2
+  seed: 42
+
+optimizer:
+  lr: 0.0005
+  weight_decay: 0.01
+
+scheduler:
+  step_size: 1
+  gamma: 0.7
+
+output:
+  weights_path: clip_pets_finetuned.pth

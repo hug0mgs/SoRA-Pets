@@ -5,3 +5,4 @@ peft
 scikit-learn
 tqdm
 Pillow
+PyYAML
