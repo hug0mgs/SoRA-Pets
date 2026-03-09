@@ -4,7 +4,7 @@ dataset:
 model:
   name: openai/clip-vit-base-patch32
   lora:
-    mode: with_lora
+    mode: with_lora          # with_lora | without_lora | both | with_sora_no_schedule | with_sora_schedule
     r: 16
     alpha: 32
     dropout: 0.05
@@ -18,9 +18,9 @@ model:
     sparse_lambda: 10
     sparse_lambda_2: 3.0e-4
     sparse_lr: null
-    lambda_schedule: null
-    max_lambda: null
-    lambda_num: null
+    lambda_schedule: linear
+    max_lambda: 1.0
+    lambda_num: 5
     schedule_epochs: 15
 
 training:
