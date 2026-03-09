@@ -1,6 +1,6 @@
 # CLIP Fine-Tuning com LoRA / SoRA
 
-Script de treino para classificação de imagens usando a torre visual do CLIP (`openai/clip-vit-base-patch32`) com head linear e suporte a LoRA e SoRA (Sparse optimized LoRA).
+Script de treino para classificação de imagens usando a torre visual do CLIP (`openai/clip-vit-base-patch32`) com head linear e suporte a LoRA e SoRA (Sparse optimized LoRA). O SoRA implementa o Algorithm 1 do paper *SoRA: Sparse Low-Rank Adaptation*.
 
 O projeto usa como padrão o dataset `enterprise-explorers/oxford-pets` no Hugging Face e carrega todos os parâmetros a partir de um arquivo YAML.
 
@@ -31,7 +31,7 @@ dataset:
 model:
   name: openai/clip-vit-base-patch32
   lora:
-    mode: with_lora          # with_lora | without_lora | both | with_sora
+    mode: with_lora          # with_lora | without_lora | both | with_sora_no_schedule | with_sora_schedule
     r: 16
     alpha: 32
     dropout: 0.05
@@ -45,9 +45,9 @@ model:
     sparse_lambda: 10        # peso do L1 na loss total (CE + lambda * sparse)
     sparse_lambda_2: 3.0e-4  # lambda inicial do SparseAdamW (soft-thresholding)
     sparse_lr: null           # LR separado para gates (null = usa optimizer.lr)
-    lambda_schedule: null     # null | linear | log_linear | exp_linear
-    max_lambda: null          # lambda final do schedule
-    lambda_num: null          # número de fases do schedule
+    lambda_schedule: linear   # linear | log_linear | exp_linear (usado apenas com with_sora_schedule)
+    max_lambda: 1.0           # lambda final do schedule
+    lambda_num: 5             # número de fases do schedule
     schedule_epochs: 15       # épocas por fase do schedule
 
 training:
@@ -91,25 +91,26 @@ O campo `model.lora.mode` aceita:
 | `with_lora` | Treina com LoRA (via PEFT) |
 | `without_lora` | Treina só o head de classificação, sem adaptadores |
 | `both` | Executa dois treinos em sequência: com LoRA e sem |
-| `with_sora` | Treina com SoRA — LoRA esparso com gates e proximal step |
+| `with_sora_no_schedule` | Treina com SoRA — lambda fixo, sem fases de schedule |
+| `with_sora_schedule` | Treina com SoRA — lambda crescente em múltiplas fases (Algorithm 1 do paper) |
 
 Quando o modo for `both`, o script salva dois checkpoints separados:
 `clip_pets_finetuned_with_lora.pth` e `clip_pets_finetuned_without_lora.pth`.
 
 ## SoRA (Sparse optimized LoRA)
 
-O SoRA adiciona gates multiplicativos nos adaptadores LoRA. Um `SparseAdamW` aplica soft-thresholding nos gates a cada step, zerando os que ficam abaixo do limiar (`sparse_lambda_2`). Isso produz adaptadores esparsos — menos parâmetros ativos com menor perda de acurácia.
+O SoRA implementa o Algorithm 1 do paper *SoRA: Sparse Low-Rank Adaptation*. Adiciona gates multiplicativos nos adaptadores LoRA. Um `SparseAdamW` aplica soft-thresholding nos gates a cada step, zerando os que ficam abaixo do limiar (`sparse_lambda_2`). Isso produz adaptadores esparsos — menos parâmetros ativos com menor perda de acurácia.
 
-A seção `model.sora` só é usada quando `mode: with_sora`.
+A seção `model.sora` só é usada quando `mode: with_sora_no_schedule` ou `mode: with_sora_schedule`. Todos os campos ficam preenchidos no YAML; o modo determina quais são usados.
 
-### SoRA sem schedule (lambda fixo)
+### `with_sora_no_schedule` (lambda fixo)
 
-O modo mais simples. O lambda do soft-thresholding é fixo durante todo o treino.
+O modo mais simples. O lambda do soft-thresholding é fixo durante todo o treino. Os campos `lambda_schedule`, `max_lambda` e `lambda_num` são ignorados.
 
 ```yaml
 model:
   lora:
-    mode: with_sora
+    mode: with_sora_no_schedule
     r: 16
     alpha: 32
     dropout: 0.05
@@ -119,21 +120,22 @@ model:
     sparse_lambda: 10
     sparse_lambda_2: 3.0e-4
     sparse_lr: null
-    lambda_schedule: null     # <-- sem schedule
-    max_lambda: null
-    lambda_num: null
+    lambda_schedule: linear   # ignorado neste modo
+    max_lambda: 1.0           # ignorado neste modo
+    lambda_num: 5             # ignorado neste modo
+    schedule_epochs: 15       # ignorado neste modo
 ```
 
 Nesse modo o treino roda `training.epochs` épocas com um único valor de lambda.
 
-### SoRA com schedule (Algorithm 1 do paper)
+### `with_sora_schedule` (Algorithm 1 do paper)
 
 O lambda do soft-thresholding cresce ao longo de múltiplas fases, forçando esparsidade progressiva. Após as `training.epochs` épocas iniciais, o script executa `lambda_num - 1` fases adicionais, cada uma com `schedule_epochs` épocas e um lambda maior.
 
 ```yaml
 model:
   lora:
-    mode: with_sora
+    mode: with_sora_schedule
     r: 16
     alpha: 32
     dropout: 0.05
@@ -161,7 +163,7 @@ Os tipos de schedule disponíveis:
 
 O script imprime métricas por época. As métricas exibidas dependem do modo:
 
-**Todos os modos** (`with_lora`, `without_lora`, `with_sora`):
+**Todos os modos** (`with_lora`, `without_lora`, `with_sora_no_schedule`, `with_sora_schedule`):
 
 | Métrica | Descrição |
 |---------|-----------|
@@ -170,7 +172,7 @@ O script imprime métricas por época. As métricas exibidas dependem do modo:
 | `Acc` | Acurácia no conjunto de validação |
 | `LR` | Learning rate atual |
 
-**Apenas `with_sora`** (adicionadas ao final da linha):
+**Apenas `with_sora_no_schedule` / `with_sora_schedule`** (adicionadas ao final da linha):
 
 | Métrica | Descrição |
 |---------|-----------|
@@ -178,10 +180,10 @@ O script imprime métricas por época. As métricas exibidas dependem do modo:
 | `Sparsity` | Percentual de gates que são exatamente zero |
 | `λ` | Lambda atual do SparseAdamW (soft-thresholding) |
 
-Exemplo de saída para `with_sora`:
+Exemplo de saída para `with_sora_no_schedule`:
 
 ```
-[with_sora] Epoch 1/3 - CE: 3.6743 - Total: 3.7802 - Acc: 12.50% - LR: 0.000350 - Sparse: 0.0106 - Sparsity: 4.2% (27/640) - λ: 0.0003
+[with_sora_no_schedule] Epoch 1/3 - CE: 3.6743 - Total: 3.7802 - Acc: 12.50% - LR: 0.000350 - Sparse: 0.0106 - Sparsity: 4.2% (27/640) - λ: 0.0003
 ```
 
 Exemplo de saída para `with_lora`:
