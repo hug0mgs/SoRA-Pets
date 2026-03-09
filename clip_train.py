@@ -188,9 +188,15 @@ def apply_sora(model, lora_config):
         setattr(parent, child_name, wrapped)
 
     print(f"SoRA applied to {len(replacements)} modules")
+
+
+def print_trainable_summary(model, mode):
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
-    print(f"Trainable params: {trainable:,} / {total:,} ({trainable / total * 100:.2f}%)")
+    print(f"[{mode}] Trainable params: {trainable:,} / {total:,} ({trainable / total * 100:.2f}%)")
+    if mode in SORA_MODES:
+        gates = sum(p.numel() for n, p in model.named_parameters() if "sora" in n and "gate" in n)
+        print(f"[{mode}] Gate params: {gates:,}")
 
 
 def build_model(config, num_classes, device):
@@ -213,10 +219,10 @@ def build_model(config, num_classes, device):
             bias=lora_config["bias"],
         )
         model.vision_model = get_peft_model(model.vision_model, peft_config)
-        model.vision_model.print_trainable_parameters()
     elif mode in SORA_MODES:
         apply_sora(model, lora_config)
 
+    print_trainable_summary(model, mode)
     model.to(device)
     return model
 
