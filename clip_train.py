@@ -134,18 +134,18 @@ def build_dataloaders(config, processor, device):
 
 
 class CLIPForClassification(nn.Module):
-    def __init__(self, clip_model, num_classes):
+    def __init__(self, vision_model, num_classes):
         super().__init__()
-        self.clip = clip_model
+        self.vision_model = vision_model
         self.num_classes = num_classes
-        hidden_size = self.clip.vision_model.config.hidden_size
+        hidden_size = self.vision_model.config.hidden_size
         self.classifier = nn.Linear(hidden_size, num_classes)
 
-        for param in self.clip.parameters():
+        for param in self.vision_model.parameters():
             param.requires_grad = False
 
     def forward(self, pixel_values, labels=None):
-        vision_outputs = self.clip.vision_model(pixel_values=pixel_values)
+        vision_outputs = self.vision_model(pixel_values=pixel_values)
         pooled_output = vision_outputs.pooler_output
         logits = self.classifier(pooled_output)
 
@@ -165,7 +165,7 @@ def apply_sora(model, lora_config):
     dropout = lora_config["dropout"]
 
     # Collect targets before modifying the module tree
-    modules_map = dict(model.clip.vision_model.named_modules())
+    modules_map = dict(model.vision_model.named_modules())
     replacements = []
     for name in list(modules_map.keys()):
         for target in target_modules:
@@ -176,7 +176,7 @@ def apply_sora(model, lora_config):
                 parent = modules_map[parts[0]]
                 child_name = parts[1]
             else:
-                parent = model.clip.vision_model
+                parent = model.vision_model
                 child_name = parts[0]
 
             original_linear = getattr(parent, child_name)
@@ -198,7 +198,10 @@ def build_model(config, num_classes, device):
     lora_config = model_config["lora"]
 
     clip_model = CLIPModel.from_pretrained(model_config["name"])
-    model = CLIPForClassification(clip_model, num_classes)
+    vision_model = clip_model.vision_model
+    del clip_model
+
+    model = CLIPForClassification(vision_model, num_classes)
 
     mode = lora_config["mode"]
     if mode == "with_lora":
@@ -209,8 +212,8 @@ def build_model(config, num_classes, device):
             lora_dropout=lora_config["dropout"],
             bias=lora_config["bias"],
         )
-        model.clip.vision_model = get_peft_model(model.clip.vision_model, peft_config)
-        model.clip.vision_model.print_trainable_parameters()
+        model.vision_model = get_peft_model(model.vision_model, peft_config)
+        model.vision_model.print_trainable_parameters()
     elif mode in SORA_MODES:
         apply_sora(model, lora_config)
 
