@@ -17,7 +17,8 @@ from sora import SoRAWrappedLinear, SparseAdamW
 
 
 DEFAULT_CONFIG_PATH = Path("train_config.yml")
-VALID_LORA_MODES = {"with_lora", "without_lora", "both", "with_sora"}
+VALID_LORA_MODES = {"with_lora", "without_lora", "both", "with_sora_no_schedule", "with_sora_schedule"}
+SORA_MODES = {"with_sora_no_schedule", "with_sora_schedule"}
 
 
 def get_device():
@@ -210,7 +211,7 @@ def build_model(config, num_classes, device):
         )
         model.clip.vision_model = get_peft_model(model.clip.vision_model, peft_config)
         model.clip.vision_model.print_trainable_parameters()
-    elif mode == "with_sora":
+    elif mode in SORA_MODES:
         apply_sora(model, lora_config)
 
     model.to(device)
@@ -241,7 +242,8 @@ def build_output_path(base_output_path, run_mode, multiple_runs):
 def build_optimizer(model, config):
     optimizer_config = config["optimizer"]
     sora_config = config["model"].get("sora", {})
-    is_sora = config["model"]["lora"]["mode"] == "with_sora"
+    mode = config["model"]["lora"]["mode"]
+    is_sora = mode in SORA_MODES
 
     if is_sora:
         gate_params = []
@@ -264,11 +266,21 @@ def build_optimizer(model, config):
         )
 
         sparse_lr = sora_config.get("sparse_lr") or optimizer_config["lr"]
+
+        if mode == "with_sora_schedule":
+            lambda_schedule = sora_config.get("lambda_schedule")
+            max_lambda = sora_config.get("max_lambda")
+            lambda_num = sora_config.get("lambda_num")
+        else:
+            lambda_schedule = None
+            max_lambda = None
+            lambda_num = None
+
         sparse_optimizer = SparseAdamW(
             sparse_lambda=sora_config.get("sparse_lambda_2", 3e-4),
-            lambda_schedule=sora_config.get("lambda_schedule"),
-            max_lambda=sora_config.get("max_lambda"),
-            lambda_num=sora_config.get("lambda_num"),
+            lambda_schedule=lambda_schedule,
+            max_lambda=max_lambda,
+            lambda_num=lambda_num,
             params=gate_params,
             lr=sparse_lr,
             weight_decay=0.0,
@@ -374,7 +386,7 @@ def run_training(config, train_loader, eval_loader, class_names, device):
     sparse_scheduler = build_scheduler(sparse_optimizer, config) if sparse_optimizer is not None else None
 
     sora_config = config["model"].get("sora", {})
-    is_sora = run_mode == "with_sora"
+    is_sora = run_mode in SORA_MODES
     sparse_lambda = sora_config.get("sparse_lambda", 0.0) if is_sora else 0.0
 
     total_epochs = config["training"]["epochs"]
@@ -413,12 +425,11 @@ def run_training(config, train_loader, eval_loader, class_names, device):
     _run_epochs(total_epochs)
 
     # Lambda schedule phases (Algorithm 1 from the SoRA paper)
-    if is_sora and sparse_optimizer is not None:
-        lambda_schedule = sora_config.get("lambda_schedule")
+    if run_mode == "with_sora_schedule" and sparse_optimizer is not None:
         lambda_num = sora_config.get("lambda_num")
         schedule_epochs = sora_config.get("schedule_epochs", total_epochs)
 
-        if lambda_schedule is not None and lambda_num is not None:
+        if lambda_num is not None:
             for phase in range(1, lambda_num):
                 sparse_optimizer.step_lambda()
                 print(f"\n--- Schedule phase {phase}/{lambda_num - 1}, lambda={sparse_optimizer.sparse_lambda} ---")
