@@ -15,11 +15,52 @@ from transformers import CLIPModel, CLIPProcessor
 
 from sora import SoRAWrappedLinear, SparseAdamW
 
-
 DEFAULT_CONFIG_PATH = Path("train_config.yml")
 VALID_LORA_MODES = {"with_lora", "without_lora", "both", "with_sora_no_schedule", "with_sora_schedule"}
 SORA_MODES = {"with_sora_no_schedule", "with_sora_schedule"}
 
+class CLIPForClassification(nn.Module):
+    def __init__(self, vision_model, num_classes):
+        super().__init__()
+        self.vision_model = vision_model
+        self.num_classes = num_classes
+        hidden_size = self.vision_model.config.hidden_size
+        self.classifier = nn.Linear(hidden_size, num_classes)
+
+        for param in self.vision_model.parameters():
+            param.requires_grad = False
+
+    def forward(self, pixel_values, labels=None):
+        vision_outputs = self.vision_model(pixel_values=pixel_values)
+        pooled_output = vision_outputs.pooler_output
+        logits = self.classifier(pooled_output)
+
+        loss = None
+        if labels is not None:
+            loss_fct = nn.CrossEntropyLoss()
+            loss = loss_fct(logits.view(-1, self.num_classes), labels.view(-1))
+
+        return {"logits": logits, "loss": loss}
+    
+class CustomCollator:
+    """
+    Essa classe referencia a função "collate_fn",
+    essa abordagem deixa o código mais limpo e flexível
+    """
+    def __init__(self, processor, label_to_idx, device):
+        self.processor = processor
+        self.label_to_idx = label_to_idx
+        self.device = device
+
+    def __call__(self, batch):
+        images = [item["image"] for item in batch]
+        labels = [encode_label(item["label"], self.label_to_idx) for item in batch]
+        
+        inputs = self.processor(images=images, return_tensors="pt", padding=True)
+        pixel_values = inputs["pixel_values"].to(self.device)
+        label_tensor = torch.tensor(labels, dtype=torch.long, device=self.device)
+        
+        return pixel_values, label_tensor
 
 def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -101,7 +142,13 @@ def encode_label(label, label_to_idx):
 
 
 def make_collate_fn(processor, label_to_idx, device):
+    # A função externa é a única aceita pelo DataLoader
     def collate_fn(batch):
+        """
+        A função interna é utilizada para enviar as imagens e seus rótulos
+        para a rede neural treinar 
+        """
+
         images = [item["image"] for item in batch]
         labels = [encode_label(item["label"], label_to_idx) for item in batch]
         inputs = processor(images=images, return_tensors="pt", padding=True)
@@ -131,31 +178,6 @@ def build_dataloaders(config, processor, device):
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     eval_loader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
     return train_loader, eval_loader, class_names
-
-
-class CLIPForClassification(nn.Module):
-    def __init__(self, vision_model, num_classes):
-        super().__init__()
-        self.vision_model = vision_model
-        self.num_classes = num_classes
-        hidden_size = self.vision_model.config.hidden_size
-        self.classifier = nn.Linear(hidden_size, num_classes)
-
-        for param in self.vision_model.parameters():
-            param.requires_grad = False
-
-    def forward(self, pixel_values, labels=None):
-        vision_outputs = self.vision_model(pixel_values=pixel_values)
-        pooled_output = vision_outputs.pooler_output
-        logits = self.classifier(pooled_output)
-
-        loss = None
-        if labels is not None:
-            loss_fct = nn.CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, self.num_classes), labels.view(-1))
-
-        return {"logits": logits, "loss": loss}
-
 
 def apply_sora(model, lora_config):
     """Replace target linear modules with SoRAWrappedLinear in the vision model."""
