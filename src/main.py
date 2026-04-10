@@ -12,7 +12,7 @@ from clip_setup import (
     benchmark_attention, quantize_weights
 )
 from trainer import ModelTrainer 
-from src.sora import pre_prune_whole_model, re_freeze_vision_model
+from sora import pre_prune_whole_model, re_freeze_vision_model
 
 def main():
     """
@@ -93,7 +93,10 @@ def main():
             multiple_runs=multiple_runs,
         )
         
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            
         torch.save(final_state_dict, output_path)
         print(f"Saved optimized weights to {output_path}")
 

@@ -1,6 +1,5 @@
 import argparse
 from pathlib import Path
-from trainer import ModelTrainer
 
 import torch
 import torch.nn as nn
@@ -14,7 +13,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import CLIPModel, CLIPProcessor
 
-from src.sora import SoRAWrappedLinear, SparseAdamW
+from sora import SoRAWrappedLinear, SparseAdamW
 
 DEFAULT_CONFIG_PATH = Path("train_config.yml")
 VALID_LORA_MODES = {"with_lora", "without_lora", "both", "with_sora_no_schedule", "with_sora_schedule"}
@@ -296,7 +295,7 @@ def benchmark_attention(model, loader, device, num_batches=10):
     time_ms = start.elapsed_time(end)
     vram_mb = torch.cuda.max_memory_allocated(device) / 1024**2
 
-    print(f"\n📊 BENCHMARK SDPA: {time_ms/num_batches:.1f}ms/batch | VRAM: {vram_mb:.1f}MB\n")
+    print(f"\nBENCHMARK SDPA: {time_ms/num_batches:.1f}ms/batch | VRAM: {vram_mb:.1f}MB\n")
 
 def quantize_weights(state_dict):
     """

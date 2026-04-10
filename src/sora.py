@@ -96,7 +96,7 @@ def prune_sora_to_lora_and_report(model):
         if r_new == 0:
             keep_idx = torch.topk(gate.abs(), k=1).indices
             r_new = 1
-            print(f"   ⚠️  {name:<50} → Rank zerado forçado para 1")
+            print(f"    {name:<50} → Rank zerado forçado para 1")
 
         # Compacta as matrizes A e B e absorve o gate na matriz B
         A_pruned = sora.lora_A.data[keep_idx, :]
@@ -118,7 +118,7 @@ def prune_sora_to_lora_and_report(model):
         module.sora = PrunedLoRA(A_pruned, new_B, sora.scaling)
         sora_modules += 1
 
-        print(f"   ✅ {name:<50} Rank: {r_original:3d} → {r_new:3d}")
+        print(f"   {name:<50} Rank: {r_original:3d} → {r_new:3d}")
 
     total_after = sum(p.numel() for p in model.parameters() if p.requires_grad)
     
@@ -165,8 +165,10 @@ def pre_prune_whole_model(model, prune_ratio=0.3, device="cpu"):
     return model
 
 def re_freeze_vision_model(model):
-    """Integridade do Backbone. Garante que o vision_model não seja treinado após as modificações estruturais."""
-    for param in model.vision_model.parameters():
+    """Integridade do Backbone. Garante que o vision_model não seja treinado após as modificações estruturais, mantendo apenas os adaptadores (SoRA/LoRA) ativos."""
+    for name, param in model.vision_model.named_parameters():
+        if "sora" in name or "lora" in name:
+            continue
         param.requires_grad = False
     return model
 

@@ -1,5 +1,7 @@
-from clip_setup import compute_gate_sparsity, train_epoch, evaluate
-from src.sora import prune_sora_to_lora_and_report, get_trainable_state_dict
+from clip_setup import (
+    compute_gate_sparsity, train_epoch, evaluate
+)
+from sora import prune_sora_to_lora_and_report, get_trainable_state_dict
 
 class ModelTrainer:
     """
