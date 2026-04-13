@@ -24,8 +24,9 @@ def main():
     4. Otimização Prévia: Opcionalmente reduz o backbone original via pre-pruning.
     5. Treinamento: Executa o loop via ModelTrainer, monitorando acurácia e esparsidade.
     6. Refinamento: Se SoRA for usado, realiza a poda estrutural para gerar um modelo compacto.
-    7. Compressão: Aplica quantização INT8 para reduzir o peso final em até 4x.
-    8. Exportação: Salva os pesos otimizados para uso futuro.
+    7. Retreino: Depois da poda estrutural, o modelo compacto é submetido a uma nova avaliação
+    8. Compressão: Aplica quantização INT8 para reduzir o peso final em até 4x.
+    9. Exportação: Salva os pesos otimizados para uso futuro.
     """
     args = parse_args()
     config = load_config(args.config)
@@ -78,17 +79,36 @@ def main():
         print(f"\nStarting run: {run_mode}")
         trainer.execute_epochs(total_epochs)
 
+        # BenchMark de Inferência
         trainer.benchmark_inference(eval_loader, device)
 
-        # 6. Finalização: Poda estrutural do SoRA e extração de pesos treinados
-        trainable_state_dict = trainer.finalize()
+        # 6. Finalização: Poda estrutural do SoRA, extração de pesos treinados e do modelo compacto
+        trainable_state_dict, post_prunning_model = trainer.finalize()
+
+        final_trainer = ModelTrainer(
+            model=post_prunning_model, 
+            train_loader=train_loader, 
+            eval_loader=eval_loader, 
+            optimizer=optimizer, 
+            sparse_optimizer=sparse_optimizer, 
+            scheduler=scheduler, 
+            sparse_scheduler=sparse_scheduler, 
+            config=run_config, 
+            is_sora=False
+        )
+
+        # 7. Avaliação do modelo compacto
+        print("Iniciando a avaliação do modelo compacto:")
+        final_trainer.execute_epochs(total_epochs)
         
-        # 7. Quantização INT8 para redução drástica de tamanho
+        final_trainer.benchmark_inference(eval_loader, device)
+
+        # 8. Quantização INT8 para redução drástica de tamanho
         print(f"Tamanho antes da quantização: {sys.getsizeof(pickle.dumps(trainable_state_dict)) / 1024**2:.2f} MB")
         final_state_dict = quantize_weights(trainable_state_dict)
         print(f"Tamanho após quantização: {sys.getsizeof(pickle.dumps(final_state_dict)) / 1024**2:.2f} MB")
 
-        # 8. Salvamento dos pesos
+        # 9. Salvamento dos pesos
         output_path = build_output_path(
             config["output"]["weights_path"],
             run_mode=run_mode,

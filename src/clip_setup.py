@@ -149,8 +149,6 @@ def resolve_label_metadata(dataset_split):
     label_to_idx.update({str(label): idx for idx, label in enumerate(unique_labels)})
     return class_names, label_to_idx
 
-
-
 def encode_label(label, label_to_idx):
     """Normalização de Labels. Converte valores brutos do dataset para índices inteiros."""
     if isinstance(label, torch.Tensor):

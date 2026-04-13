@@ -69,6 +69,7 @@ model:
     - **Pruning**: O modelo SoRA é "compactado" em um LoRA de rank menor.
     - **Extraction**: Apenas os pesos modificados são extraídos.
     - **Quantization**: Os pesos são convertidos para INT8.
+5. **Retreino**: O Modelo compactado é re-avaliado
 5. **Exportação**: O arquivo `.pth` final contém um modelo otimizado e extremamente leve.
 
 ## Modos de Treino (LoRA/SoRA)

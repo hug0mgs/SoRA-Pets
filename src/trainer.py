@@ -167,4 +167,4 @@ class ModelTrainer:
             self.model = prune_sora_to_lora_and_report(self.model)
 
         # Retorna apenas os pesos treinados para salvar um arquivo leve e pronto para deploy
-        return get_trainable_state_dict(self.model)
+        return [get_trainable_state_dict(self.model), self.model]
