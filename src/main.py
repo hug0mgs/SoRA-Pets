@@ -46,10 +46,10 @@ def main():
         
         # 2. Pré-Poda opcional do backbone (se configurado)
         sora_config = run_config["model"].get("sora", {})
-        if sora_config.get("pre_prune_ratio"):
-            ratio = sora_config["pre_prune_ratio"]
-            model = pre_prune_whole_model(model, prune_ratio=ratio, device=device)
-            model = re_freeze_vision_model(model)
+        # if sora_config.get("pre_prune_ratio"):
+        #     ratio = sora_config["pre_prune_ratio"]
+        #     model = pre_prune_whole_model(model, prune_ratio=ratio, device=device)
+        #     model = re_freeze_vision_model(model)
 
         # 3. Benchmark de performance da atenção
         benchmark_attention(model, eval_loader, device)
@@ -77,6 +77,8 @@ def main():
         total_epochs = run_config["training"]["epochs"]
         print(f"\nStarting run: {run_mode}")
         trainer.execute_epochs(total_epochs)
+
+        trainer.benchmark_inference(eval_loader, device)
 
         # 6. Finalização: Poda estrutural do SoRA e extração de pesos treinados
         trainable_state_dict = trainer.finalize()

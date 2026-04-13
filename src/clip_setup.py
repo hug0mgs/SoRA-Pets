@@ -25,7 +25,7 @@ class CLIPForClassification(nn.Module):
     Esta classe encapsula o encoder de visão do CLIP e adiciona uma camada linear
     no topo (head) para realizar a classificação em N classes, mantendo o backbone original congelado.
     """
-    def __init__(self, vision_model, num_classes):
+    def __init__(self, vision_model, num_classes, freeze_vision=True):
         super().__init__()
         self.vision_model = vision_model
         self.num_classes = num_classes
@@ -33,8 +33,9 @@ class CLIPForClassification(nn.Module):
         self.classifier = nn.Linear(hidden_size, num_classes)
 
         # Congela os parâmetros do backbone para garantir um Fine-Tuning eficiente (apenas o head ou adaptadores treinam)
-        for param in self.vision_model.parameters():
-            param.requires_grad = False
+        if freeze_vision:
+            for param in self.vision_model.parameters():
+                param.requires_grad = False
 
     def forward(self, pixel_values, labels=None):
         """
@@ -147,6 +148,7 @@ def resolve_label_metadata(dataset_split):
     label_to_idx = {label: idx for idx, label in enumerate(unique_labels)}
     label_to_idx.update({str(label): idx for idx, label in enumerate(unique_labels)})
     return class_names, label_to_idx
+
 
 
 def encode_label(label, label_to_idx):
