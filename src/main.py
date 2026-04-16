@@ -2,6 +2,8 @@ import os
 import torch
 import pickle
 import sys
+import yaml
+import json
 from transformers import CLIPProcessor
 
 # Importa as funções auxiliares e de configuração do clip_setup
@@ -81,6 +83,24 @@ def main():
         total_epochs = run_config["training"]["epochs"]
         print(f"\nStarting run: {run_mode}")
         trainer.execute_epochs(total_epochs)
+
+        # 1. Atualização incremental do arquivo de métricas unificado (YAML)
+        metrics_path = "plot/training_metrics.yml"
+        all_metrics = {}
+        
+        if os.path.exists(metrics_path):
+            with open(metrics_path, "r") as f:
+                try:
+                    all_metrics = yaml.safe_load(f) or {}
+                except yaml.YAMLError:
+                    all_metrics = {}
+        
+        all_metrics[run_mode] = trainer.history
+        
+        with open(metrics_path, "w") as f:
+            yaml.dump(all_metrics, f, default_flow_style=False)
+        
+        print(f"Métricas do modo '{run_mode}' atualizadas em: {metrics_path}")
 
         # BenchMark de Inferência
         trainer.benchmark_inference(eval_loader, device)

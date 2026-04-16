@@ -32,6 +32,10 @@ class ModelTrainer:
         self.sora_config = config["model"].get("sora", {})
         self.pld_scheduler = None
 
+        self.history = []
+        # Salva o tempo total de treino
+        self.total_train_time = 0.0
+
         if self.run_mode == "with_sora-pld_schedule":
              #Usando as 12 camadas do Backbone
              total_epochs = config["training"]["epochs"]
@@ -79,12 +83,25 @@ class ModelTrainer:
                 active_layers = self.pld_scheduler.get_active_layers(epoch)
                 print(f"[PLD] Epoch {epoch+1}/{num_epochs} | Active Layers: {active_layers}")
 
+            start_time = time.perf_counter()
+
             metrics = train_epoch(
                 self.model, self.train_loader, self.optimizer, 
                 active_layers, self.sparse_optimizer, sparse_lambda
             )
+
+            epoch_time = time.perf_counter() - start_time
+            self.total_train_time += epoch_time
             
             eval_acc = evaluate(self.model, self.eval_loader)
+
+            #Salvando métricas pra plotagem
+            self.history.append({
+                "epoch": epoch + 1,
+                "train_time_cum": self.total_train_time,
+                "loss": metrics['total_loss'],
+                "accuracy": eval_acc
+            })
 
             self.scheduler.step()
             if self.sparse_scheduler:

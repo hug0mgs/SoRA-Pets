@@ -15,7 +15,7 @@ from transformers import CLIPModel, CLIPProcessor
 
 from sora import SoRAWrappedLinear, SparseAdamW
 
-DEFAULT_CONFIG_PATH = Path("train_config.yml")
+DEFAULT_CONFIG_PATH = Path("config/train_config.yml")
 VALID_LORA_MODES = {"with_lora", "without_lora", "both", "with_sora_no_schedule", "with_sora-pld_schedule"}
 SORA_MODES = {"with_sora_no_schedule", "with_sora-pld_schedule"}
 
