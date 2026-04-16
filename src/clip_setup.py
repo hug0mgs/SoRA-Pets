@@ -16,8 +16,8 @@ from transformers import CLIPModel, CLIPProcessor
 from sora import SoRAWrappedLinear, SparseAdamW
 
 DEFAULT_CONFIG_PATH = Path("train_config.yml")
-VALID_LORA_MODES = {"with_lora", "without_lora", "both", "with_sora_no_schedule", "with_sora_schedule"}
-SORA_MODES = {"with_sora_no_schedule", "with_sora_schedule"}
+VALID_LORA_MODES = {"with_lora", "without_lora", "both", "with_sora_no_schedule", "with_sora-pld_schedule"}
+SORA_MODES = {"with_sora_no_schedule", "with_sora-pld_schedule"}
 
 class CLIPForClassification(nn.Module):
     """
@@ -37,12 +37,17 @@ class CLIPForClassification(nn.Module):
             for param in self.vision_model.parameters():
                 param.requires_grad = False
 
-    def forward(self, pixel_values, labels=None):
+    def forward(self, pixel_values, labels=None, active_layers=None):
         """
-        Passagem para frente (Forward pass).
+        Passagem para frente (Forward pass) com suporte a PLD.
         Extrai as características globais da imagem através do vision_model e as projeta 
         no espaço de classes via o classificador linear.
         """
+        # INJEÇÃO DO PLD: "Cola" a lista de camadas ativas no encoder do Hugging Face
+        # para que ele saiba quais pular durante este exato batch.
+        if hasattr(self.vision_model, 'encoder'):
+            self.vision_model.encoder._pld_active_layers = active_layers
+
         vision_outputs = self.vision_model(pixel_values=pixel_values)
         pooled_output = vision_outputs.pooler_output
         logits = self.classifier(pooled_output)
@@ -234,6 +239,46 @@ def apply_sora(model, lora_config, upper_k=None):
 
     print(f"SoRA aplicado a {len(replacements)} módulos (Últimas {upper_k or 'todas'} camadas)")
 
+def patch_clip_encoder_for_pld(vision_model):
+    """
+    Esta função modifica dinamicamente o comportamento de inferência do backbone de 
+    visão (CLIP), permitindo que o modelo pule a execução de camadas específicas 
+    durante o 'forward pass', economizando processamento (FLOPs) e acelerando o treino.
+    """
+    encoder = vision_model.encoder
+
+    for i, layer in enumerate(encoder.layers):
+        layer_idx = i + 1  # Camadas de 1 a 12
+        orig_forward = layer.forward  # Salva o método original da camada na memória
+
+        # Criamos um escopo isolado para gerar o wrapper correto para cada índice
+        def create_pld_wrapper(idx, original_fwd):
+            def pld_layer_forward(self_layer, *args, **kwargs):
+                # 1. Lê as camadas ativas que foram coladas no encoder
+                active_layers = getattr(encoder, '_pld_active_layers', None)
+
+                # 2. SE A CAMADA DEVE RODAR (ou se for modo de inferência padrão):
+                if active_layers is None or idx in active_layers:
+                    # Simplesmente repassa TUDO intacto para o método original
+                    return original_fwd(*args, **kwargs)
+                
+                # 3. SE A CAMADA FOI CORTADA (Identity Mapping):
+                else:
+                    # O hidden_states é sempre o primeiro argumento posicional ou o kwarg principal
+                    hidden_states = args[0] if len(args) > 0 else kwargs.get('hidden_states')
+                    
+                    # O HF espera receber uma tupla de volta. Se pedirem os pesos de atenção, retornamos None.
+                    if kwargs.get('output_attentions', False):
+                        return (hidden_states, None)
+                    return (hidden_states,)
+                    
+            return pld_layer_forward
+
+        # Importa types e substitui o forward apenas desta camada específica
+        import types
+        layer.forward = types.MethodType(create_pld_wrapper(layer_idx, orig_forward), layer)
+
+    return vision_model
 
 def build_model(config, num_classes, device):
     """
@@ -250,6 +295,9 @@ def build_model(config, num_classes, device):
     del clip_model
 
     model = CLIPForClassification(vision_model, num_classes)
+
+    #Injeção de PLD
+    model.vision_model = patch_clip_encoder_for_pld(model.vision_model)
 
     mode = lora_config["mode"]
     
@@ -371,7 +419,7 @@ def build_optimizer(model, config):
 
         sparse_lr = sora_config.get("sparse_lr") or optimizer_config["lr"]
 
-        if mode == "with_sora_schedule":
+        if mode == "with_sora-pld_schedule":
             lambda_schedule = sora_config.get("lambda_schedule")
             max_lambda = sora_config.get("max_lambda")
             lambda_num = sora_config.get("lambda_num")
@@ -415,7 +463,7 @@ def build_scheduler(optimizer, config):
     )
 
 
-def train_epoch(model, loader, optimizer, sparse_optimizer=None, sparse_lambda=0.0):
+def train_epoch(model, loader, optimizer, active_layers, sparse_optimizer=None, sparse_lambda=0.0):
     """
     Loop de Treino por Época.
     Calcula a perda CE (Cross-Entropy Loss) e a penalidade de esparsidade, executando o backpropagation 

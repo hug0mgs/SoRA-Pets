@@ -2,10 +2,11 @@ from clip_setup import (
     compute_gate_sparsity, train_epoch, evaluate
 )
 from sora import prune_sora_to_lora_and_report, get_trainable_state_dict
+from pld import PLDScheduler
+from tqdm import tqdm
 import torch
 import time
 import numpy as np
-from tqdm import tqdm
 
 class ModelTrainer:
     """
@@ -26,10 +27,15 @@ class ModelTrainer:
         self.sparse_optimizer = sparse_optimizer
         self.scheduler = scheduler
         self.sparse_scheduler = sparse_scheduler
-
         self.run_mode = config["model"]["lora"]["mode"]
         self.is_sora = is_sora
         self.sora_config = config["model"].get("sora", {})
+        self.pld_scheduler = None
+
+        if self.run_mode == "with_sora-pld_schedule":
+             #Usando as 12 camadas do Backbone
+             total_epochs = config["training"]["epochs"]
+             self.pld_scheduler = PLDScheduler(total_epochs=total_epochs, total_layers=12)
 
     def print_metrics(self, epoch, num_epochs, metrics, eval_acc, phase_label):
         """
@@ -66,7 +72,18 @@ class ModelTrainer:
         sparse_lambda = self.sora_config.get("sparse_lambda", 0.0) if self.is_sora else 0.0
 
         for epoch in range(num_epochs):
-            metrics = train_epoch(self.model, self.train_loader, self.optimizer, self.sparse_optimizer, sparse_lambda)
+            active_layers = None
+            
+            # Determine active layers if PLD is active for this mode
+            if self.pld_scheduler is not None:
+                active_layers = self.pld_scheduler.get_active_layers(epoch)
+                print(f"[PLD] Epoch {epoch+1}/{num_epochs} | Active Layers: {active_layers}")
+
+            metrics = train_epoch(
+                self.model, self.train_loader, self.optimizer, 
+                active_layers, self.sparse_optimizer, sparse_lambda
+            )
+            
             eval_acc = evaluate(self.model, self.eval_loader)
 
             self.scheduler.step()

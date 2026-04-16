@@ -11,7 +11,8 @@ from clip_setup import (
     build_model, build_optimizer, build_scheduler, 
     benchmark_attention, quantize_weights
 )
-from trainer import ModelTrainer 
+from trainer import ModelTrainer
+from clip_setup import patch_clip_encoder_for_pld
 from sora import pre_prune_whole_model, re_freeze_vision_model
 
 def main():
@@ -44,6 +45,8 @@ def main():
 
         # 1. Constrói o modelo (já com SDPA)
         model = build_model(run_config, num_classes=len(class_names), device=device)
+
+        model.vision_model = patch_clip_encoder_for_pld(model.vision_model)
         
         # 2. Pré-Poda opcional do backbone (se configurado)
         sora_config = run_config["model"].get("sora", {})
@@ -60,7 +63,7 @@ def main():
         scheduler = build_scheduler(optimizer, run_config)
         sparse_scheduler = build_scheduler(sparse_optimizer, run_config) if sparse_optimizer else None
         
-        is_sora = run_mode in run_config["model"].get("sora_modes", ["with_sora_no_schedule", "with_sora_schedule"])
+        is_sora = run_mode in run_config["model"].get("sora_modes", ["with_sora_no_schedule", "with_sora-pld_schedule"])
 
         # 5. Configura o Trainer e executa o treino
         trainer = ModelTrainer(
@@ -85,23 +88,31 @@ def main():
         # 6. Finalização: Poda estrutural do SoRA, extração de pesos treinados e do modelo compacto
         trainable_state_dict, post_prunning_model = trainer.finalize()
 
-        final_trainer = ModelTrainer(
-            model=post_prunning_model, 
-            train_loader=train_loader, 
-            eval_loader=eval_loader, 
-            optimizer=optimizer, 
-            sparse_optimizer=sparse_optimizer, 
-            scheduler=scheduler, 
-            sparse_scheduler=sparse_scheduler, 
-            config=run_config, 
-            is_sora=False
-        )
+        # healing_lr = run_config["training"]["learning_rate"] * 0.1
+        # healing_optimizer = torch.optim.AdamW(post_prunning_model.parameters(), lr=healing_lr)
+
+        # final_trainer = ModelTrainer(
+        #     model=post_prunning_model, 
+        #     train_loader=train_loader, 
+        #     eval_loader=eval_loader, 
+        #     optimizer=healing_optimizer, # Use the reduced LR optimizer
+        #     sparse_optimizer=None,       # Disable sparse optimizer
+        #     scheduler=None,              # Disable complex scheduling for the short heal
+        #     sparse_scheduler=None, 
+        #     config=run_config, 
+        #     is_sora=False                # Crucial: turn off SoRA logic
+        # )
+        
+        # # Since run_mode is likely "with_sora_schedule", PLD will currently trigger here.
+        # # Ensure PLD is disabled during healing. You can override it explicitly:
+        # final_trainer.run_mode = "healing" 
+        # final_trainer.pld_scheduler = None
 
         # 7. Avaliação do modelo compacto
-        print("Iniciando a avaliação do modelo compacto:")
-        final_trainer.execute_epochs(total_epochs)
-        
-        final_trainer.benchmark_inference(eval_loader, device)
+        # print("Iniciando a avaliação do modelo compacto:")
+        # Heal for fewer epochs (e.g., 3-5)
+        # healing_epochs = 5 
+        # final_trainer.execute_epochs(healing_epochs, phase_label="Processo de Cura")
 
         # 8. Quantização INT8 para redução drástica de tamanho
         print(f"Tamanho antes da quantização: {sys.getsizeof(pickle.dumps(trainable_state_dict)) / 1024**2:.2f} MB")

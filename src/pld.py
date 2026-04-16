@@ -9,6 +9,10 @@ class PLDScheduler:
     o dropping das camadas mais profundas.
     """
     def __init__(self, total_epochs, total_layers=12, theta_bar=0.5):
+        """
+        Total_layers = 12 porque as camadas congeladas pelo PaCA, mesmo sem consumir VRAM, ainda consomem FLOPs 
+        para processar a imagem. O PLD vai desligar essas camadas também para acelerar a inferência.
+        """
         self.total_epochs = total_epochs
         self.total_layers = total_layers
         self.theta_bar = theta_bar
