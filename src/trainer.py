@@ -36,7 +36,9 @@ class ModelTrainer:
         # Salva o tempo total de treino
         self.total_train_time = 0.0
 
-        if self.run_mode == "with_sora-pld_schedule":
+        pld_modes = ["with_sora-pld_schedule", "with_lora-pld"]
+
+        if self.run_mode in pld_modes:
              #Usando as 12 camadas do Backbone
              total_epochs = config["training"]["epochs"]
              self.pld_scheduler = PLDScheduler(total_epochs=total_epochs, total_layers=12)

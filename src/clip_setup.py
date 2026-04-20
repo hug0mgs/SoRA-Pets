@@ -16,8 +16,9 @@ from transformers import CLIPModel, CLIPProcessor
 from sora import SoRAWrappedLinear, SparseAdamW
 
 DEFAULT_CONFIG_PATH = Path("config/train_config.yml")
-VALID_LORA_MODES = {"with_lora", "without_lora", "both", "with_sora_no_schedule", "with_sora-pld_schedule"}
+VALID_LORA_MODES = {"with_lora-pld", "with_lora", "without_lora", "both", "with_sora_no_schedule", "with_sora-pld_schedule"}
 SORA_MODES = {"with_sora_no_schedule", "with_sora-pld_schedule"}
+LORA_MODES = ["with_lora", "with_lora-pld"] #Adicionando o modo LoRA-PLD
 
 class CLIPForClassification(nn.Module):
     """
@@ -305,7 +306,7 @@ def build_model(config, num_classes, device):
     paca_config = config["model"].get("paca", {})
     upper_k = paca_config.get("upper_layers") if paca_config.get("enabled") else None
 
-    if mode == "with_lora":
+    if mode in LORA_MODES:
         peft_config = LoraConfig(
             r=lora_config["r"],
             lora_alpha=lora_config["alpha"],
@@ -314,6 +315,7 @@ def build_model(config, num_classes, device):
             bias=lora_config["bias"],
         )
         model.vision_model = get_peft_model(model.vision_model, peft_config)
+
     elif mode in SORA_MODES:
         apply_sora(model, lora_config, upper_k=upper_k)
 
