@@ -4,7 +4,7 @@ dataset:
 model:
   name: openai/clip-vit-base-patch32
   lora:
-    mode: with_sora_no_schedule        # with_lora | without_lora | both | with_sora_no_schedule | with_sora-pld_schedule
+    mode: with_sora-pld_schedule         # with_lora-pld | with_lora | without_lora | both | with_sora_no_schedule | with_sora-pld_schedule
     r: 8
     alpha: 32
     dropout: 0.05
@@ -20,7 +20,7 @@ model:
     # upper_layers: null    # se quiser desabilitar
   sora:
     sparse_lambda: 0.001
-    sparse_lambda_2: 3.0e-3
+    sparse_lambda_2: 3.0e-4
     sparse_lr: null
     lambda_schedule: linear
     max_lambda: 7.0e-4
