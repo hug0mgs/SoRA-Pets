@@ -30,7 +30,9 @@ class ModelTrainer:
         self.run_mode = config["model"]["lora"]["mode"]
         self.is_sora = is_sora
         self.sora_config = config["model"].get("sora", {})
+        self.pld_config = config["model"].get("pld", {})
         self.pld_scheduler = None
+        self.pld_limit = self.pld_config.get("pld_limit") # Pegando o pld_limit pelo train_config.yml
 
         self.history = []
         # Salva o tempo total de treino
@@ -41,7 +43,7 @@ class ModelTrainer:
         if self.run_mode in pld_modes:
              #Usando as 12 camadas do Backbone
              total_epochs = config["training"]["epochs"]
-             self.pld_scheduler = PLDScheduler(total_epochs=total_epochs, total_layers=12)
+             self.pld_scheduler = PLDScheduler(total_epochs=total_epochs, pld_limit=self.pld_limit)
 
     def print_metrics(self, epoch, num_epochs, metrics, eval_acc, phase_label):
         """
@@ -84,6 +86,13 @@ class ModelTrainer:
             if self.pld_scheduler is not None:
                 active_layers = self.pld_scheduler.get_active_layers(epoch)
                 print(f"[PLD] Epoch {epoch+1}/{num_epochs} | Active Layers: {active_layers}")
+                for i, layer in enumerate(self.model.vision_model.encoder.layers):
+                    idx = i + 1
+                    if idx > 6: #Mudar se o PaCA utilizar layers diferentes
+                        is_protected = getattr(layer, "_is_pld_protected", False)
+                        status = "Safe from PLD" if is_protected else "PLD using: ERROR!"
+                        print(f"Camada {idx:02d}: {status}")
+                
 
             start_time = time.perf_counter()
 

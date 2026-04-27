@@ -43,15 +43,20 @@ def main():
     multiple_runs = len(run_modes) > 1
 
     for run_mode in run_modes:
-        run_config = build_run_config(config, run_mode=run_mode)
+
+        run_config = build_run_config(config, run_mode=run_mode)# Recebendo as configurações gerais
+
+        pld_config = config["model"].get("pld", {}) # Recebendo as configurações do PLD
+        pld_limit = pld_config.get("pld_limit") # Guardando a configuração do Limite PLD
 
         # 1. Constrói o modelo (já com SDPA)
-        model = build_model(run_config, num_classes=len(class_names), device=device)
+        model = build_model(run_config, pld_limit, num_classes=len(class_names), device=device)
 
-        model.vision_model = patch_clip_encoder_for_pld(model.vision_model)
+        model.vision_model = patch_clip_encoder_for_pld(model.vision_model, pld_limit=pld_limit)
         
         # 2. Pré-Poda opcional do backbone (se configurado)
         sora_config = run_config["model"].get("sora", {})
+
         # if sora_config.get("pre_prune_ratio"):
         #     ratio = sora_config["pre_prune_ratio"]
         #     model = pre_prune_whole_model(model, prune_ratio=ratio, device=device)

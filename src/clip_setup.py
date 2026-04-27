@@ -240,7 +240,7 @@ def apply_sora(model, lora_config, upper_k=None):
 
     print(f"SoRA aplicado a {len(replacements)} módulos (Últimas {upper_k or 'todas'} camadas)")
 
-def patch_clip_encoder_for_pld(vision_model):
+def patch_clip_encoder_for_pld(vision_model, pld_limit):
     """
     Esta função modifica dinamicamente o comportamento de inferência do backbone de 
     visão (CLIP), permitindo que o modelo pule a execução de camadas específicas 
@@ -250,20 +250,28 @@ def patch_clip_encoder_for_pld(vision_model):
 
     for i, layer in enumerate(encoder.layers):
         layer_idx = i + 1  # Camadas de 1 a 12
+
+        # Etiquetando as camadas que o PLD atuará
+        layer._is_pld_protected = (layer_idx > pld_limit)
+
         orig_forward = layer.forward  # Salva o método original da camada na memória
 
         # Criamos um escopo isolado para gerar o wrapper correto para cada índice
         def create_pld_wrapper(idx, original_fwd):
             def pld_layer_forward(self_layer, *args, **kwargs):
-                # 1. Lê as camadas ativas que foram coladas no encoder
+                # Lê as camadas ativas que foram coladas no encoder
                 active_layers = getattr(encoder, '_pld_active_layers', None)
 
-                # 2. SE A CAMADA DEVE RODAR (ou se for modo de inferência padrão):
+                # Deixando SEMPRE ativas as camadas usadas pelo PaCA
+                if getattr(self_layer, '_is_pld_protected', False):
+                    return original_fwd(*args, **kwargs)
+
+                # SE A CAMADA DEVE RODAR (ou se for modo de inferência padrão):
                 if active_layers is None or idx in active_layers:
                     # Simplesmente repassa TUDO intacto para o método original
                     return original_fwd(*args, **kwargs)
                 
-                # 3. SE A CAMADA FOI CORTADA (Identity Mapping):
+                # SE A CAMADA FOI CORTADA (Identity Mapping):
                 else:
                     # O hidden_states é sempre o primeiro argumento posicional ou o kwarg principal
                     hidden_states = args[0] if len(args) > 0 else kwargs.get('hidden_states')
@@ -281,7 +289,7 @@ def patch_clip_encoder_for_pld(vision_model):
 
     return vision_model
 
-def build_model(config, num_classes, device):
+def build_model(config, pld_limit, num_classes, device):
     """
     Fábrica de Modelos.
     Instancia o CLIP com otimização SDPA (Scaled Dot Product Attention) e aplica 
@@ -298,7 +306,7 @@ def build_model(config, num_classes, device):
     model = CLIPForClassification(vision_model, num_classes)
 
     #Injeção de PLD
-    model.vision_model = patch_clip_encoder_for_pld(model.vision_model)
+    model.vision_model = patch_clip_encoder_for_pld(model.vision_model, pld_limit)
 
     mode = lora_config["mode"]
     
