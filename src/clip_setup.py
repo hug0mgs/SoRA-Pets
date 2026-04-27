@@ -240,19 +240,23 @@ def apply_sora(model, lora_config, upper_k=None):
 
     print(f"SoRA aplicado a {len(replacements)} módulos (Últimas {upper_k or 'todas'} camadas)")
 
-def patch_clip_encoder_for_pld(vision_model, pld_limit):
+def patch_clip_encoder_for_pld(vision_model, pld_limit, upper_k=None):
     """
     Esta função modifica dinamicamente o comportamento de inferência do backbone de 
     visão (CLIP), permitindo que o modelo pule a execução de camadas específicas 
     durante o 'forward pass', economizando processamento (FLOPs) e acelerando o treino.
     """
     encoder = vision_model.encoder
+    total_layers = len(encoder.layers)
 
     for i, layer in enumerate(encoder.layers):
         layer_idx = i + 1  # Camadas de 1 a 12
 
-        # Etiquetando as camadas que o PLD atuará
-        layer._is_pld_protected = (layer_idx > pld_limit)
+        # MAPEAMENTO: Identifica se a camada é uma camada PaCA (últimas K camadas)
+        if upper_k is not None:
+            layer._is_paca_layer = (layer_idx > total_layers - upper_k)
+        else:
+            layer._is_paca_layer = True
 
         orig_forward = layer.forward  # Salva o método original da camada na memória
 
@@ -262,21 +266,22 @@ def patch_clip_encoder_for_pld(vision_model, pld_limit):
                 # Lê as camadas ativas que foram coladas no encoder
                 active_layers = getattr(encoder, '_pld_active_layers', None)
 
-                # Deixando SEMPRE ativas as camadas usadas pelo PaCA
-                if getattr(self_layer, '_is_pld_protected', False):
-                    return original_fwd(*args, **kwargs)
+                # 1. COEXISTÊNCIA PaCA + PLD:
+                # Se a camada NÃO é PaCA (congelada), ela é DROPADA permanentemente durante o treino
+                if not getattr(self_layer, '_is_paca_layer', True) and active_layers is not None:
+                    hidden_states = args[0] if len(args) > 0 else kwargs.get('hidden_states')
+                    if kwargs.get('output_attentions', False):
+                        return (hidden_states, None)
+                    return (hidden_states,)
 
-                # SE A CAMADA DEVE RODAR (ou se for modo de inferência padrão):
+                # 2. Se FOR camada PaCA, aplicamos o PLD Dinâmico:
+                # Se estivermos em inferência (active_layers is None) ou se a camada sobreviveu ao PLD:
                 if active_layers is None or idx in active_layers:
-                    # Simplesmente repassa TUDO intacto para o método original
                     return original_fwd(*args, **kwargs)
                 
-                # SE A CAMADA FOI CORTADA (Identity Mapping):
+                # SE A CAMADA FOI CORTADA PELO PLD (Dynamic Identity Mapping):
                 else:
-                    # O hidden_states é sempre o primeiro argumento posicional ou o kwarg principal
                     hidden_states = args[0] if len(args) > 0 else kwargs.get('hidden_states')
-                    
-                    # O HF espera receber uma tupla de volta. Se pedirem os pesos de atenção, retornamos None.
                     if kwargs.get('output_attentions', False):
                         return (hidden_states, None)
                     return (hidden_states,)
@@ -305,14 +310,14 @@ def build_model(config, pld_limit, num_classes, device):
 
     model = CLIPForClassification(vision_model, num_classes)
 
-    #Injeção de PLD
-    model.vision_model = patch_clip_encoder_for_pld(model.vision_model, pld_limit)
-
     mode = lora_config["mode"]
     
     # Verifica configurações de PaCA (ajuste apenas em camadas superiores)
     paca_config = config["model"].get("paca", {})
     upper_k = paca_config.get("upper_layers") if paca_config.get("enabled") else None
+
+    # Injeção de PLD (Agora consciente de quais camadas são PaCA)
+    model.vision_model = patch_clip_encoder_for_pld(model.vision_model, pld_limit, upper_k=upper_k)
 
     if mode in LORA_MODES:
         peft_config = LoraConfig(

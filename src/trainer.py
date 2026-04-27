@@ -85,13 +85,27 @@ class ModelTrainer:
             # Determine active layers if PLD is active for this mode
             if self.pld_scheduler is not None:
                 active_layers = self.pld_scheduler.get_active_layers(epoch)
-                print(f"[PLD] Epoch {epoch+1}/{num_epochs} | Active Layers: {active_layers}")
+                print(f"\n[PLD+PaCA] Epoch {epoch+1}/{num_epochs}")
+                
+                # Resumo do estado das camadas para este Epoch
+                layer_status = []
                 for i, layer in enumerate(self.model.vision_model.encoder.layers):
                     idx = i + 1
-                    if idx > 6: #Mudar se o PaCA utilizar layers diferentes
-                        is_protected = getattr(layer, "_is_pld_protected", False)
-                        status = "Safe from PLD" if is_protected else "PLD using: ERROR!"
-                        print(f"Camada {idx:02d}: {status}")
+                    is_paca = getattr(layer, "_is_paca_layer", True)
+                    
+                    if not is_paca:
+                        status = "PERMANENT DROP"
+                    elif idx in active_layers:
+                        status = "ACTIVE"
+                    else:
+                        status = "DYNAMIC DROP"
+                    
+                    layer_status.append(f"L{idx:02d}:{status}")
+                
+                # Print em blocos de 4 para facilitar a leitura
+                for i in range(0, len(layer_status), 4):
+                    print(" | ".join(layer_status[i:i+4]))
+                print("-" * 40)
                 
 
             start_time = time.perf_counter()

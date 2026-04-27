@@ -1,86 +1,60 @@
-# CLIP Fine-Tuning com LoRA / SoRA (Modular & Optimized)
+# Project SoRA-Pets
 
-Este projeto realiza o ajuste fino (fine-tuning) da torre visual do CLIP (`openai/clip-vit-base-patch32`) para classificação de imagens, utilizando técnicas avançadas de adaptação de baixo rank (LoRA) e adaptação esparsa otimizada (SoRA).
+This project provides a highly optimized pipeline for fine-tuning the vision encoder of CLIP (`openai/clip-vit-base-patch32`) for image classification. It employs advanced adaptation techniques such as **LoRA** (Low-Rank Adaptation), **SoRA** (Sparse Low-Rank Adaptation), and **PLD** (Progressive Layer Dropping) to achieve high performance with minimal parameter updates and memory footprint.
 
-Esta versão foi reestruturada para ser **modular, eficiente e pronta para produção**, incluindo otimizações de hardware e compressão de modelos.
+## Key Technologies
+- **Frameworks**: PyTorch, Hugging Face Transformers, PEFT, Datasets.
+- **Optimization**: Scaled Dot Product Attention (SDPA), INT8 Quantization, Structural Pruning.
+- **Hardware Support**: CUDA, MPS (Metal Performance Shaders), and CPU.
 
-## Novidades nesta Versão
+## Architecture
+The project is organized into a modular `src/` directory:
+- `src/main.py`: The central orchestration script for the entire pipeline.
+- `src/clip_setup.py`: Contains utility functions for model construction, data loading, optimizer setup, and model patching.
+- `src/trainer.py`: Implements the `ModelTrainer` class, managing the training lifecycle, evaluation, and benchmarking.
+- `src/sora.py`: Core implementation of Sparse Low-Rank Adaptation (SoRA) and structural pruning algorithms.
+- `src/pld.py`: Implements the `PLDScheduler` for Progressive Layer Dropping.
 
-- **Arquitetura Modular**: Código organizado em módulos (`src/`) com separação clara de responsabilidades (Model, Data, Training, Optimization).
-- **Performance (SDPA)**: Utiliza *Scaled Dot Product Attention* nativo do PyTorch para redução drástica de VRAM e aumento de velocidade.
-- **Estratégia PaCA**: Suporte para aplicação de adaptadores apenas nas camadas superiores (*upper layers*) do encoder.
-- **Compressão de Modelo**:
-    - **Poda Estrutural (Pruning)**: Converte automaticamente SoRA esparso em LoRA denso e menor após o treino.
-    - **Quantização INT8**: Reduz o tamanho dos pesos salvos em até 4x com perda mínima de precisão.
-    - **Extração de Adapters**: Salva apenas os pesos treinados (LoRA + Head), ideal para ambientes de banda limitada ou Federated Learning.
+## Building and Running
 
-## Estrutura do Projeto
+### Environment Setup
+1. Create and activate a virtual environment:
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-```
-src/
-├── main.py          # Ponto de entrada e orquestração do pipeline
-├── clip_setup.py    # Configurações de modelo, dados e utilitários de compressão
-├── trainer.py       # Classe ModelTrainer (gerenciamento do ciclo de vida do treino)
-└── sora.py          # Implementação core do SoRA e algoritmos de poda
-```
-
-## Instalação
-
+### Execution
+To start the fine-tuning process using the default configuration:
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python3 src/main.py
 ```
 
-## Execução
+### Configuration
+Training is controlled via a YAML configuration file (e.g., `src/config/train_config.yml`). Key sections include:
+- `dataset`: Name of the dataset (e.g., `enterprise-explorers/oxford-pets`).
+- `model`: Model name, LoRA/SoRA settings, PaCA (Partial Calibration) layers, and PLD limits.
+- `training`: Batch size, epochs, test size, and seed.
+- `optimizer`/`scheduler`: Learning rates, weight decay, and decay steps.
 
-Para iniciar o treinamento com as novas otimizações:
+## Development Conventions
 
-```bash
-python3 src/main.py --config train_config.yml
-```
+### Coding Style & Standards
+- **Modular Design**: Keep logic separated into specialized modules.
+- **Configuration-Driven**: All hyperparameters and run modes should be defined in the YAML config.
+- **Documentation**: Use descriptive docstrings (PT-BR is currently prevalent in the codebase) for classes and major functions.
+- **Type Hinting**: Utilize Python type hints for clarity.
 
-## Configurações Avançadas (YAML)
+### Testing & Validation
+- **Benchmarking**: The project includes automatic benchmarks for attention (SDPA) and inference performance (latency/throughput).
+- **Metrics**: Training history is automatically saved to `plot/training_metrics.yml`.
+- **Validation**: Accuracy is validated after each epoch using `scikit-learn`.
 
-O arquivo `train_config.yml` suporta novas chaves:
-
-```yaml
-model:
-  name: openai/clip-vit-base-patch32
-  paca:
-    enabled: true
-    upper_layers: 4          # Aplica SoRA apenas nas últimas 4 camadas
-  lora:
-    mode: with_sora_schedule # with_lora | without_lora | both | with_sora_no_schedule | with_sora_schedule
-    r: 16
-    alpha: 32
-  sora:
-    pre_prune_ratio: 0.1     # Poda 10% do backbone original antes de começar
-    sparse_lambda: 10
-    # ... outras configs de schedule
-```
-
-## Ciclo de Vida do Modelo
-
-1. **Setup**: O modelo é carregado com SDPA e, opcionalmente, sofre uma pré-poda do backbone.
-2. **Benchmark**: Um teste rápido de latência e VRAM é executado automaticamente.
-3. **Treino**: O `ModelTrainer` executa as épocas, monitorando a esparsidade dos gates SoRA.
-4. **Finalização**:
-    - **Pruning**: O modelo SoRA é "compactado" em um LoRA de rank menor.
-    - **Extraction**: Apenas os pesos modificados são extraídos.
-    - **Quantization**: Os pesos são convertidos para INT8.
-5. **Retreino**: O Modelo compactado é re-avaliado
-5. **Exportação**: O arquivo `.pth` final contém um modelo otimizado e extremamente leve.
-
-## Modos de Treino (LoRA/SoRA)
-
-| Modo | Descrição |
-|------|-----------|
-| `with_lora` | Treina com adaptadores LoRA padrão. |
-| `without_lora` | Treina apenas o cabeçalho de classificação. |
-| `with_sora_no_schedule` | SoRA com fator de esparsidade fixo. |
-| `with_sora_schedule` | SoRA com esparsidade progressiva (Algorithm 1 do paper). |
-
-## Créditos e Referências
-
-O SoRA implementa os conceitos do paper *SoRA: Sparse Low-Rank Adaptation*, focando em reduzir a redundância de parâmetros em adaptadores de modelos de larga escala.
+### Post-Processing
+- **Pruning**: SoRA models are automatically pruned to a dense LoRA format post-training.
+- **Quantization**: Final weights are quantized to INT8 to reduce storage size (~4x reduction).
+- **Extraction**: Only trainable parameters (adapters and head) are saved to the final `.pth` file.

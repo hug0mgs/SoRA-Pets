@@ -51,8 +51,6 @@ def main():
 
         # 1. Constrói o modelo (já com SDPA)
         model = build_model(run_config, pld_limit, num_classes=len(class_names), device=device)
-
-        model.vision_model = patch_clip_encoder_for_pld(model.vision_model, pld_limit=pld_limit)
         
         # 2. Pré-Poda opcional do backbone (se configurado)
         sora_config = run_config["model"].get("sora", {})
@@ -89,7 +87,7 @@ def main():
         print(f"\nStarting run: {run_mode}")
         trainer.execute_epochs(total_epochs)
 
-        # 1. Atualização incremental do arquivo de métricas unificado (YAML)
+        # Atualização incremental do arquivo de métricas unificado (YAML)
         metrics_path = "plot/training_metrics.yml"
         all_metrics = {}
         
