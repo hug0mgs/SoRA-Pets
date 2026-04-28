@@ -41,7 +41,7 @@ class ModelTrainer:
         pld_modes = ["with_sora-pld_schedule", "with_lora-pld"]
 
         if self.run_mode in pld_modes:
-             #Usando as 12 camadas do Backbone
+             # PLD LOCAL: O pld_limit agora refere-se ao número de camadas DENTRO do PaCA que sofrerão drop.
              total_epochs = config["training"]["epochs"]
              self.pld_scheduler = PLDScheduler(total_epochs=total_epochs, pld_limit=self.pld_limit)
 
@@ -92,13 +92,16 @@ class ModelTrainer:
                 for i, layer in enumerate(self.model.vision_model.encoder.layers):
                     idx = i + 1
                     is_paca = getattr(layer, "_is_paca_layer", True)
+                    rel_idx = getattr(layer, "_paca_rel_idx", -1)
                     
                     if not is_paca:
-                        status = "PERMANENT DROP"
-                    elif idx in active_layers:
-                        status = "ACTIVE"
+                        status = "PERM DROP"
+                    elif rel_idx <= self.pld_limit:
+                        # Camada PaCA dentro do escopo do PLD
+                        status = "ACTIVE" if rel_idx in active_layers else "DROPPED"
                     else:
-                        status = "DYNAMIC DROP"
+                        # Camada PaCA protegida (fora do pld_limit)
+                        status = "ACTIVE (OUT OF PLD LIMIT)"
                     
                     layer_status.append(f"L{idx:02d}:{status}")
                 
@@ -133,7 +136,7 @@ class ModelTrainer:
                 self.sparse_scheduler.step()
 
             self.print_metrics(epoch, num_epochs, metrics, eval_acc, phase_label)
-        
+                    
     @torch.no_grad()
     def benchmark_inference(self, loader, device, num_batches=50, warmup_batches=10, desc="Inference Benchmark"):
         """

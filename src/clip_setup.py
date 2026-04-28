@@ -252,16 +252,19 @@ def patch_clip_encoder_for_pld(vision_model, pld_limit, upper_k=None):
     for i, layer in enumerate(encoder.layers):
         layer_idx = i + 1  # Camadas de 1 a 12
 
-        # MAPEAMENTO: Identifica se a camada é uma camada PaCA (últimas K camadas)
+        # 1. MAPEAMENTO PaCA: Identifica se a camada é uma camada PaCA (últimas K camadas)
         if upper_k is not None:
             layer._is_paca_layer = (layer_idx > total_layers - upper_k)
+            # Calcula o índice relativo dentro do bloco PaCA (ex: se upper_k=6, camada 7 tem rel_idx=1)
+            layer._paca_rel_idx = (layer_idx - (total_layers - upper_k)) if layer._is_paca_layer else -1
         else:
             layer._is_paca_layer = True
+            layer._paca_rel_idx = layer_idx
 
         orig_forward = layer.forward  # Salva o método original da camada na memória
 
-        # Criamos um escopo isolado para gerar o wrapper correto para cada índice
-        def create_pld_wrapper(idx, original_fwd):
+        # Escopo isolado para gerar o wrapper correto para cada índice
+        def create_pld_wrapper(idx, rel_idx, original_fwd):
             def pld_layer_forward(self_layer, *args, **kwargs):
                 # Lê as camadas ativas que foram coladas no encoder
                 active_layers = getattr(encoder, '_pld_active_layers', None)
@@ -274,23 +277,26 @@ def patch_clip_encoder_for_pld(vision_model, pld_limit, upper_k=None):
                         return (hidden_states, None)
                     return (hidden_states,)
 
-                # 2. Se FOR camada PaCA, aplicamos o PLD Dinâmico:
-                # Se estivermos em inferência (active_layers is None) ou se a camada sobreviveu ao PLD:
-                if active_layers is None or idx in active_layers:
-                    return original_fwd(*args, **kwargs)
+                # 2. Se FOR camada PaCA, verificamos se ela está no escopo do PLD (rel_idx <= pld_limit):
+                if getattr(self_layer, '_is_paca_layer', True) and rel_idx <= pld_limit and active_layers is not None:
+                    # PLD DINÂMICO: Se a camada (índice relativo) sobreviveu ao sorteio do agendador:
+                    if rel_idx in active_layers:
+                        return original_fwd(*args, **kwargs)
+                    # SE A CAMADA FOI CORTADA PELO PLD (Dynamic Identity Mapping):
+                    else:
+                        hidden_states = args[0] if len(args) > 0 else kwargs.get('hidden_states')
+                        if kwargs.get('output_attentions', False):
+                            return (hidden_states, None)
+                        return (hidden_states,)
                 
-                # SE A CAMADA FOI CORTADA PELO PLD (Dynamic Identity Mapping):
-                else:
-                    hidden_states = args[0] if len(args) > 0 else kwargs.get('hidden_states')
-                    if kwargs.get('output_attentions', False):
-                        return (hidden_states, None)
-                    return (hidden_states,)
+                # 3. CAMADAS PROTEGIDAS (PaCA mas fora do pld_limit) ou MODO INFERÊNCIA (active_layers is None):
+                return original_fwd(*args, **kwargs)
                     
             return pld_layer_forward
 
         # Importa types e substitui o forward apenas desta camada específica
         import types
-        layer.forward = types.MethodType(create_pld_wrapper(layer_idx, orig_forward), layer)
+        layer.forward = types.MethodType(create_pld_wrapper(layer_idx, layer._paca_rel_idx, orig_forward), layer)
 
     return vision_model
 
