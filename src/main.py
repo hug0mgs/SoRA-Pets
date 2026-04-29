@@ -27,12 +27,12 @@ def main():
     4. Otimização Prévia: Opcionalmente reduz o backbone original via pre-pruning.
     5. Treinamento: Executa o loop via ModelTrainer, monitorando acurácia e esparsidade.
     6. Refinamento: Se SoRA for usado, realiza a poda estrutural para gerar um modelo compacto.
-    7. Retreino: Depois da poda estrutural, o modelo compacto é submetido a uma nova avaliação
-    8. Compressão: Aplica quantização INT8 para reduzir o peso final em até 4x.
-    9. Exportação: Salva os pesos otimizados para uso futuro.
+    7. Compressão: Aplica quantização INT8 para reduzir o peso final em até 4x.
+    8. Exportação: Salva os pesos otimizados para uso futuro.
     """
     args = parse_args()
     config = load_config(args.config)
+    pld_limit = args.pld_limit
     device = get_device()
 
     # Inicializa o processador e os dataloaders
@@ -47,7 +47,6 @@ def main():
         run_config = build_run_config(config, run_mode=run_mode)# Recebendo as configurações gerais
 
         pld_config = config["model"].get("pld", {}) # Recebendo as configurações do PLD
-        pld_limit = pld_config.get("pld_limit") # Guardando a configuração do Limite PLD
 
         # 1. Constrói o modelo (já com SDPA)
         model = build_model(run_config, pld_limit, num_classes=len(class_names), device=device)
@@ -80,7 +79,8 @@ def main():
             scheduler=scheduler, 
             sparse_scheduler=sparse_scheduler, 
             config=run_config, 
-            is_sora=is_sora
+            is_sora=is_sora,
+            pld_limit=pld_limit
         )
         
         total_epochs = run_config["training"]["epochs"]
@@ -97,13 +97,15 @@ def main():
                     all_metrics = yaml.safe_load(f) or {}
                 except yaml.YAMLError:
                     all_metrics = {}
-        
-        all_metrics[run_mode] = trainer.history
-        
+        if pld_limit == 3:
+            all_metrics[run_mode+"_pld-3"] = trainer.history
+        elif pld_limit == 6:
+            all_metrics[run_mode+"_pld-6"] = trainer.history
+
         with open(metrics_path, "w") as f:
             yaml.dump(all_metrics, f, default_flow_style=False)
         
-        print(f"Métricas do modo '{run_mode}' atualizadas em: {metrics_path}")
+        print(f"Métricas do modo '{run_mode}_pld-{pld_limit}' atualizadas em: {metrics_path}")
 
         # BenchMark de Inferência
         trainer.benchmark_inference(eval_loader, device)
@@ -111,38 +113,12 @@ def main():
         # 6. Finalização: Poda estrutural do SoRA, extração de pesos treinados e do modelo compacto
         trainable_state_dict, post_prunning_model = trainer.finalize()
 
-        # healing_lr = run_config["training"]["learning_rate"] * 0.1
-        # healing_optimizer = torch.optim.AdamW(post_prunning_model.parameters(), lr=healing_lr)
-
-        # final_trainer = ModelTrainer(
-        #     model=post_prunning_model, 
-        #     train_loader=train_loader, 
-        #     eval_loader=eval_loader, 
-        #     optimizer=healing_optimizer, # Use the reduced LR optimizer
-        #     sparse_optimizer=None,       # Disable sparse optimizer
-        #     scheduler=None,              # Disable complex scheduling for the short heal
-        #     sparse_scheduler=None, 
-        #     config=run_config, 
-        #     is_sora=False                # Crucial: turn off SoRA logic
-        # )
-        
-        # # Since run_mode is likely "with_sora_schedule", PLD will currently trigger here.
-        # # Ensure PLD is disabled during healing. You can override it explicitly:
-        # final_trainer.run_mode = "healing" 
-        # final_trainer.pld_scheduler = None
-
-        # 7. Avaliação do modelo compacto
-        # print("Iniciando a avaliação do modelo compacto:")
-        # Heal for fewer epochs (e.g., 3-5)
-        # healing_epochs = 5 
-        # final_trainer.execute_epochs(healing_epochs, phase_label="Processo de Cura")
-
-        # 8. Quantização INT8 para redução drástica de tamanho
+        # 7. Quantização INT8 para redução drástica de tamanho
         print(f"Tamanho antes da quantização: {sys.getsizeof(pickle.dumps(trainable_state_dict)) / 1024**2:.2f} MB")
         final_state_dict = quantize_weights(trainable_state_dict)
         print(f"Tamanho após quantização: {sys.getsizeof(pickle.dumps(final_state_dict)) / 1024**2:.2f} MB")
 
-        # 9. Salvamento dos pesos
+        # 8. Salvamento dos pesos
         output_path = build_output_path(
             config["output"]["weights_path"],
             run_mode=run_mode,

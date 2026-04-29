@@ -20,7 +20,6 @@ model:
     # upper_layers: null    # se quiser desabilitar
   pld:
     enabled: true
-    pld_limit: 12  # Camadas que o PLD vai utilizar
   sora:
     sparse_lambda: 0.001
     sparse_lambda_2: 3.0e-4

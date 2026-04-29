@@ -14,7 +14,7 @@ class ModelTrainer:
     Esta classe gerencia a execução do treinamento, validação por época, 
     ajustes de taxa de aprendizado e a extração final dos pesos otimizados.
     """
-    def __init__(self, model, train_loader, eval_loader, optimizer, sparse_optimizer, scheduler, sparse_scheduler, config, is_sora):
+    def __init__(self, model, train_loader, eval_loader, optimizer, sparse_optimizer, scheduler, sparse_scheduler, config, is_sora, pld_limit):
         """
         Inicialização de Recursos.
         Vincula o modelo aos seus respectivos carregadores de dados e otimizadores, 
@@ -32,7 +32,7 @@ class ModelTrainer:
         self.sora_config = config["model"].get("sora", {})
         self.pld_config = config["model"].get("pld", {})
         self.pld_scheduler = None
-        self.pld_limit = self.pld_config.get("pld_limit") # Pegando o pld_limit pelo train_config.yml
+        self.pld_limit = pld_limit
 
         self.history = []
         # Salva o tempo total de treino
