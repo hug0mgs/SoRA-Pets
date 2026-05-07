@@ -3,7 +3,7 @@ import torch
 import pickle
 import sys
 import yaml
-import json
+import time
 from transformers import CLIPProcessor
 
 # Importa as funções auxiliares e de configuração do clip_setup
@@ -85,7 +85,12 @@ def main():
         
         total_epochs = run_config["training"]["epochs"]
         print(f"\nStarting run: {run_mode}")
+
+        # Medição de tempo no terminal
+        start = time.time()
         trainer.execute_epochs(total_epochs)
+        end = time.time()
+        print(f"Run '{run_mode}' completed in {(end - start)/60:.2f} minutes.")
 
         # Atualização incremental do arquivo de métricas unificado (YAML)
         metrics_path = "plot/training_metrics.yml"
@@ -97,10 +102,8 @@ def main():
                     all_metrics = yaml.safe_load(f) or {}
                 except yaml.YAMLError:
                     all_metrics = {}
-        if pld_limit == 3:
-            all_metrics[run_mode+"_pld-3"] = trainer.history
-        elif pld_limit == 6:
-            all_metrics[run_mode+"_pld-6"] = trainer.history
+        
+        all_metrics[run_mode+"_pld-"+str(pld_limit)] = trainer.history
 
         with open(metrics_path, "w") as f:
             yaml.dump(all_metrics, f, default_flow_style=False)

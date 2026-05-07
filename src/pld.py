@@ -8,15 +8,15 @@ class PLDScheduler:
     incrementando a probabilidade de drop durante o progresso do treino e favoritando
     o dropping das camadas mais profundas.
     """
-    def __init__(self, total_epochs, pld_limit, theta_bar=0.5):
+    def __init__(self, total_epochs, pld_limit, theta_bar=0.75):
         """
         PLD_Limit armazena até qual camada o PLD vai poder atuar.
         """
         self.total_epochs = total_epochs
         self.pld_limit = pld_limit
         self.theta_bar = theta_bar
-        # Gamma controla a taxa de decaimento; 100/T é uma heurística que tirei do paper
-        self.gamma = 100.0 / total_epochs if total_epochs > 0 else 0
+        # Gamma controla a taxa de decaimento;
+        self.gamma = 30.0 / total_epochs if total_epochs > 0 else 0
 
     def get_drop_prob(self, current_epoch, layer_idx):
         """Calcula a probabilidade de dropping de uma camada específica"""

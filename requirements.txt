@@ -1,8 +1,12 @@
-torch
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.4.0
+torchvision
+torchaudio
 datasets
-transformers
+transformers==4.51.0
 peft
 scikit-learn
 tqdm
 Pillow
 PyYAML
+matplotlib
