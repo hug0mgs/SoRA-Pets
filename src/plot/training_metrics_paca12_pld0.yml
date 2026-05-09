@@ -61,3 +61,24 @@ with_sora-pld_schedule_paca12_pld0_rep2:
   train_time_cum: 864.5377176240145
   loss: 0.015482654263945045
   accuracy: 0.9235453315290933
+with_sora-pld_schedule_paca12_pld0_rep3:
+- epoch: 1
+  train_time_cum: 158.77028395800153
+  loss: 0.822918929522102
+  accuracy: 0.8788903924221921
+- epoch: 2
+  train_time_cum: 319.36767683299695
+  loss: 0.15203295577619527
+  accuracy: 0.912043301759134
+- epoch: 3
+  train_time_cum: 477.78009049999673
+  loss: 0.04913199312380842
+  accuracy: 0.9235453315290933
+- epoch: 4
+  train_time_cum: 636.6694800419937
+  loss: 0.020685005646098306
+  accuracy: 0.9235453315290933
+- epoch: 5
+  train_time_cum: 808.2748758759917
+  loss: 0.012729051608491589
+  accuracy: 0.9262516914749662
