@@ -55,7 +55,7 @@ def main():
 
             # 1. Constrói o modelo (já com SDPA)
             model = build_model(run_config, pld_limit, num_classes=len(class_names), device=device)
-            
+
             # 2. Pré-Poda opcional do backbone (se configurado)
             sora_config = run_config["model"].get("sora", {})
 
@@ -71,7 +71,7 @@ def main():
             optimizer, sparse_optimizer = build_optimizer(model, run_config)
             scheduler = build_scheduler(optimizer, run_config)
             sparse_scheduler = build_scheduler(sparse_optimizer, run_config) if sparse_optimizer else None
-            
+
             is_sora = run_mode in run_config["model"].get("sora_modes", ["with_sora_no_schedule", "with_sora-pld_schedule"])
 
             # 5. Configura o Trainer e executa o treino
@@ -87,10 +87,15 @@ def main():
                 is_sora=is_sora,
                 pld_limit=pld_limit
             )
-            
+
             total_epochs = run_config["training"]["epochs"]
             print(f"\nStarting run: {run_mode}")
+
+            # Medição de tempo no terminal
+            start = time.time()
             trainer.execute_epochs(total_epochs)
+            end = time.time()
+            print(f"Run '{run_mode}' completed in {(end - start)/60:.2f} minutes.")
 
             # Atualização incremental do arquivo de métricas unificado (YAML)
             paca_config = run_config["model"].get("paca", {})

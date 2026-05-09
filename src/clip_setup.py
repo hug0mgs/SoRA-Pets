@@ -103,7 +103,7 @@ def parse_args():
     parser.add_argument(
         "--pld_limit",
         type=int,
-        default=12,
+        default=0,
         help="Limite do PLD"
     )
     return parser.parse_args()
@@ -535,7 +535,7 @@ def train_epoch(model, loader, optimizer, active_layers, sparse_optimizer=None, 
         if sparse_optimizer is not None:
             sparse_optimizer.zero_grad()
 
-        outputs = model(pixel_values=pixel_values, labels=labels, active_layers=active_layers)
+        outputs = model(pixel_values=pixel_values, labels=labels)# active_layers=active_layers)
         ce_loss = outputs["loss"]
         loss = ce_loss
 
