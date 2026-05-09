@@ -3,7 +3,7 @@ import torch
 import pickle
 import sys
 import yaml
-import json
+import time
 from transformers import CLIPProcessor
 
 # Importa as funções auxiliares e de configuração do clip_setup
