@@ -6,3 +6,4 @@ clip-lora-pets-legacy/
 tmp/
 docs/
 *.pdf
+train_config*.yml

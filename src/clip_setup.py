@@ -1,4 +1,5 @@
 import argparse
+import time
 from pathlib import Path
 
 import torch
@@ -83,8 +84,12 @@ class CustomCollator:
         return pixel_values, label_tensor
 
 def get_device():
-    """Detecção de Hardware. Identifica se o treino ocorrerá em GPU (CUDA) ou CPU."""
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    """Detecção de Hardware. Prioriza MPS/Metal em Apple Silicon, depois CUDA, e por fim CPU."""
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        return torch.device("mps")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
 
 
 def parse_args():
@@ -98,8 +103,7 @@ def parse_args():
     parser.add_argument(
         "--pld_limit",
         type=int,
-        default=6,
-        choices=[3, 6],
+        default=12,
         help="Limite do PLD"
     )
     return parser.parse_args()
@@ -354,10 +358,11 @@ def build_model(config, pld_limit, num_classes, device):
 def benchmark_attention(model, loader, device, num_batches=10):
     """
     Benchmarking de Infraestrutura.
-    Mede a latência por batch e o consumo de VRAM, validando o impacto do SDPA na performance.
+    Mede a latência por batch e o consumo de memória, validando o impacto do SDPA na performance.
     """
-    if device == "cuda":
-        model.eval()
+    model.eval()
+
+    if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
@@ -372,7 +377,29 @@ def benchmark_attention(model, loader, device, num_batches=10):
         time_ms = start.elapsed_time(end)
         vram_mb = torch.cuda.max_memory_allocated(device) / 1024**2
 
-        print(f"\nBENCHMARK SDPA: {time_ms/num_batches:.1f}ms/batch | VRAM: {vram_mb:.1f}MB\n")
+    elif device.type == "mps":
+        if hasattr(torch.mps, "synchronize"):
+            torch.mps.synchronize()
+        start = time.perf_counter()
+        for i, (pixel_values, _) in enumerate(loader):
+            if i >= num_batches:
+                break
+            _ = model(pixel_values=pixel_values.to(device))
+        if hasattr(torch.mps, "synchronize"):
+            torch.mps.synchronize()
+        time_ms = (time.perf_counter() - start) * 1000.0
+        vram_mb = float("nan")
+
+    else:
+        start = time.perf_counter()
+        for i, (pixel_values, _) in enumerate(loader):
+            if i >= num_batches:
+                break
+            _ = model(pixel_values=pixel_values.to(device))
+        time_ms = (time.perf_counter() - start) * 1000.0
+        vram_mb = float("nan")
+
+    print(f"\nBENCHMARK SDPA: {time_ms/num_batches:.1f}ms/batch | VRAM: {vram_mb if vram_mb == vram_mb else 'N/A'}\n")
 
 def quantize_weights(state_dict):
     """
@@ -508,7 +535,7 @@ def train_epoch(model, loader, optimizer, active_layers, sparse_optimizer=None, 
         if sparse_optimizer is not None:
             sparse_optimizer.zero_grad()
 
-        outputs = model(pixel_values=pixel_values, labels=labels)
+        outputs = model(pixel_values=pixel_values, labels=labels, active_layers=active_layers)
         ce_loss = outputs["loss"]
         loss = ce_loss
 
