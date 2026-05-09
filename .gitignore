@@ -7,3 +7,4 @@ tmp/
 docs/
 *.pdf
 train_config*.yml
+training_metrics*.yaml
