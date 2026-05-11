@@ -53,33 +53,49 @@ def plot_comparative_metrics(yaml_filenames=None,
         times_list = []
         accs_list = []
         losses_list = []
+        gens_list = []      # ← novo
+        memos_list = []     # ← novo
 
         for _, metric_list in history.items():
             times = [h.get("train_time_cum", 0) for h in metric_list]
             accs = []
             losses = []
+            gens= []
+            memos = []
             for h in metric_list:
                 acc = h.get("accuracy")
                 if acc is not None:
                     acc = acc * 100 if acc <= 1.0 else acc
                 accs.append(acc)
                 losses.append(h.get("loss"))
+                gen_val = h.get("gen")
+                memo_val = h.get("memo")
+                gens.append(gen_val if gen_val is not None else 0.0)
+                memos.append(memo_val if memo_val is not None else 1.0)
 
             times_list.append(times)
             accs_list.append(accs)
             losses_list.append(losses)
+            gens_list.append(gens)
+            memos_list.append(memos)
 
         # Média por época
         times_arr = np.array(times_list)
         accs_arr = np.array(accs_list)
         losses_arr = np.array(losses_list)
+        gens_arr = np.array(gens_list)
+        memos_arr = np.array(memos_list)
 
         dados_por_config[label] = {
             "times": times_arr.mean(axis=0),
             "accs": accs_arr.mean(axis=0),
             "losses": losses_arr.mean(axis=0),
+            "gens": gens_arr.mean(axis=0),           # ← novo
+            "memos": memos_arr.mean(axis=0),         # ← novo
             "accs_std": accs_arr.std(axis=0) if plot_std else None,
             "losses_std": losses_arr.std(axis=0) if plot_std else None,
+            "gens_std": gens_arr.std(axis=0) if plot_std else None,   # ← novo
+            "memos_std": memos_arr.std(axis=0) if plot_std else None, # ← novo
         }
 
     if not dados_por_config:
@@ -138,10 +154,49 @@ def plot_comparative_metrics(yaml_filenames=None,
     plt.savefig(f"plot/{output_prefix}_Time_x_Loss.pdf", format="pdf", bbox_inches="tight", dpi=300)
     plt.close()
 
+    # ==========================================================
+    # Gráfico 3: Cumulative Time × Memorization Ratio (novo)
+    # ==========================================================
+    plt.figure(figsize=(10, 6))
+    for label, dados in dados_por_config.items():
+        plt.plot(dados["times"], dados["memos"], marker='s', label=label)
+        if plot_std and dados["memos_std"] is not None:
+            plt.fill_between(dados["times"],
+                             dados["memos"] - dados["memos_std"],
+                             dados["memos"] + dados["memos_std"],
+                             alpha=0.15)
+    plt.xlabel("Cumulative Training Time (s)")
+    plt.ylabel("Memorization Ratio (eval_acc / train_acc)")
+    #plt.ylim(0.85, 1.05)          # típico para boa compressão
+    plt.legend(loc="lower right", fontsize=10)
+    plt.title("Memorization Ratio vs Training Time")
+    plt.savefig(f"plot/{output_prefix}_Time_x_Memo.pdf", format="pdf", bbox_inches="tight", dpi=300)
+    plt.close()
+
+    # ==========================================================
+    # Gráfico 4: Cumulative Time × Generalization Gap (novo)
+    # ==========================================================
+    plt.figure(figsize=(10, 6))
+    for label, dados in dados_por_config.items():
+        plt.plot(dados["times"], dados["gens"], marker='^', label=label)
+        if plot_std and dados["gens_std"] is not None:
+            plt.fill_between(dados["times"],
+                             dados["gens"] - dados["gens_std"],
+                             dados["gens"] + dados["gens_std"],
+                             alpha=0.15)
+    plt.xlabel("Cumulative Training Time (s)")
+    plt.ylabel("Generalization Gap (train_acc - eval_acc)")
+    plt.legend(loc="upper right", fontsize=10)
+    plt.title("Generalization Gap vs Training Time")
+    plt.savefig(f"plot/{output_prefix}_Time_x_Gen.pdf", format="pdf", bbox_inches="tight", dpi=300)
+    plt.close()
+
     print("✅ Gráficos comparativos gerados com sucesso!")
-    print(f"   • plot/{output_prefix}_Time_x_Acc.pdf")
-    print(f"   • plot/{output_prefix}_Time_x_Loss.pdf")
-    print(f"   Configurações comparadas: {list(dados_por_config.keys())}")
+    print(f" • plot/{output_prefix}_Time_x_Acc.pdf")
+    print(f" • plot/{output_prefix}_Time_x_Loss.pdf")
+    print(f" • plot/{output_prefix}_Time_x_Memo.pdf   ← novo")
+    print(f" • plot/{output_prefix}_Time_x_Gen.pdf    ← novo")
+    print(f" Configurações comparadas: {list(dados_por_config.keys())}")
 
 
 if __name__ == "__main__":

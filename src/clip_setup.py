@@ -529,6 +529,8 @@ def train_epoch(model, loader, optimizer, active_layers, sparse_optimizer=None, 
     total_ce_loss = 0.0
     total_sparse_loss = 0.0
     total_loss = 0.0
+    preds = []
+    true_labels = []
 
     for pixel_values, labels in tqdm(loader, desc="train", leave=False):
         optimizer.zero_grad()
@@ -538,6 +540,11 @@ def train_epoch(model, loader, optimizer, active_layers, sparse_optimizer=None, 
         outputs = model(pixel_values=pixel_values, labels=labels)# active_layers=active_layers)
         ce_loss = outputs["loss"]
         loss = ce_loss
+        with torch.no_grad():
+            logits = model(pixel_values=pixel_values)["logits"]  # reuse o forward sem labels
+            pred = torch.argmax(logits, dim=1).cpu().numpy()
+            preds.extend(pred)
+            true_labels.extend(labels.cpu().numpy())
 
         sparse_loss_val = 0.0
         if sparse_optimizer is not None and sparse_lambda > 0:
@@ -558,10 +565,12 @@ def train_epoch(model, loader, optimizer, active_layers, sparse_optimizer=None, 
         total_loss += loss.item()
 
     n = max(len(loader), 1)
+    train_acc = accuracy_score(true_labels, preds)
     return {
         "ce_loss": total_ce_loss / n,
         "sparse_loss": total_sparse_loss / n,
         "total_loss": total_loss / n,
+        "train_acc": train_acc
     }
 
 

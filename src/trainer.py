@@ -45,7 +45,7 @@ class ModelTrainer:
              total_epochs = config["training"]["epochs"]
              self.pld_scheduler = PLDScheduler(total_epochs=total_epochs, pld_limit=self.pld_limit)
 
-    def print_metrics(self, epoch, num_epochs, metrics, eval_acc, phase_label):
+    def print_metrics(self, epoch, num_epochs, metrics, eval_acc, memo, gen_gap, phase_label):
         """
         Telemetria e Diagnóstico.
         Exibe no console os indicadores de performance (Loss, Accuracy) e o 
@@ -56,6 +56,7 @@ class ModelTrainer:
             f"[{self.run_mode}]{phase_label} Epoch {epoch + 1}/{num_epochs} - "
             f"CE: {metrics['ce_loss']:.4f} - Total: {metrics['total_loss']:.4f} - "
             f"Acc: {eval_acc * 100:.2f}% - LR: {current_lr:.6f}"
+                f" - Gen Gap: {gen_gap:.2f} - memorization: {memo:.2f}"
         )
 
         if not self.is_sora:
@@ -117,25 +118,29 @@ class ModelTrainer:
                 self.model, self.train_loader, self.optimizer, 
                 active_layers, self.sparse_optimizer, sparse_lambda
             )
-
+            print(f"Train acc {metrics['train_acc'] * 100:.2f}%")
             epoch_time = time.perf_counter() - start_time
             self.total_train_time += epoch_time
             
             eval_acc = evaluate(self.model, self.eval_loader)
-
+            gen_gap = (metrics["train_acc"] - eval_acc) * 100 if metrics["train_acc"] is not None else 0.0
+            memo = metrics["train_acc"]/ eval_acc if eval_acc > 0 else float('inf')
+            memo = memo * 100
             #Salvando métricas pra plotagem
             self.history.append({
                 "epoch": epoch + 1,
                 "train_time_cum": self.total_train_time,
                 "loss": metrics['total_loss'],
-                "accuracy": eval_acc
+                "accuracy": eval_acc,
+                "memo": memo,
+                "gen": gen_gap
             })
 
             self.scheduler.step()
             if self.sparse_scheduler:
                 self.sparse_scheduler.step()
-
-            self.print_metrics(epoch, num_epochs, metrics, eval_acc, phase_label)
+            # Gap clássico de generalização
+            self.print_metrics(epoch, num_epochs, metrics, eval_acc, memo, gen_gap, phase_label)
                     
     @torch.no_grad()
     def benchmark_inference(self, loader, device, num_batches=50, warmup_batches=10, desc="Inference Benchmark"):
