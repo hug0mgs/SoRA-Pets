@@ -10,3 +10,6 @@ tqdm
 Pillow
 PyYAML
 matplotlib
+codecarbon
+psutil
+pynvml

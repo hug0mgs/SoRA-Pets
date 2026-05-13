@@ -126,9 +126,12 @@ def main():
             key_name = f"{run_mode}_{paca_str}_pld{pld_limit}_rep{i}"
             all_metrics[key_name] = trainer.history
             
-            with open(metrics_path, "w", encoding="utf-8") as f:
-                yaml.dump(all_metrics, f, default_flow_style=False, sort_keys=False)
-            
+            try:
+                with open(metrics_path, "w", encoding="utf-8") as f:
+                    yaml.dump(all_metrics, f, default_flow_style=False, sort_keys=False)
+            except Exception as e:
+                print("Erro ao salvar as métricas")
+                
             print(f"Métricas salvas em: {metrics_path} (chave: {key_name})")
             
             print(f"Métricas do modo '{run_mode}_pld-{pld_limit}' atualizadas em: {metrics_path}")

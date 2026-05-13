@@ -4,9 +4,20 @@ from clip_setup import (
 from sora import prune_sora_to_lora_and_report, get_trainable_state_dict
 from pld import PLDScheduler
 from tqdm import tqdm
+from codecarbon import EmissionsTracker
 import torch
 import time
 import numpy as np
+import psutil 
+import os
+import pynvml
+
+# Inicialização segura da telemetria de GPU NVIDIA
+try:
+    pynvml.nvmlInit()
+    HAS_NVML = True
+except Exception:
+    HAS_NVML = False
 
 class ModelTrainer:
     """
@@ -45,6 +56,11 @@ class ModelTrainer:
              total_epochs = config["training"]["epochs"]
              self.pld_scheduler = PLDScheduler(total_epochs=total_epochs, pld_limit=self.pld_limit)
 
+        # Configuração do rastreador de emissões (CodeCarbon) para medir consumo de energia
+        self.tracker = EmissionsTracker(save_to_file=False, log_level='error')
+        # Referência ao processo atual para medir uso de RAM via psutil
+        self.process = psutil.Process(os.getpid())
+
     def print_metrics(self, epoch, num_epochs, metrics, eval_acc, memo, gen_gap, phase_label):
         """
         Telemetria e Diagnóstico.
@@ -79,6 +95,8 @@ class ModelTrainer:
         avaliação e atualizando as agendas de taxa de aprendizado.
         """
         sparse_lambda = self.sora_config.get("sparse_lambda", 0.0) if self.is_sora else 0.0
+        # Inicializa o rastreio de energia para a rodada completa de épocas
+        self.tracker.start()
 
         for epoch in range(num_epochs):
             active_layers = None
@@ -118,7 +136,6 @@ class ModelTrainer:
                 self.model, self.train_loader, self.optimizer, 
                 active_layers, self.sparse_optimizer, sparse_lambda
             )
-            print(f"Train acc {metrics['train_acc'] * 100:.2f}%")
             epoch_time = time.perf_counter() - start_time
             self.total_train_time += epoch_time
             
@@ -126,14 +143,50 @@ class ModelTrainer:
             gen_gap = (metrics["train_acc"] - eval_acc) * 100 if metrics["train_acc"] is not None else 0.0
             memo = metrics["train_acc"]/ eval_acc if eval_acc > 0 else float('inf')
             memo = memo * 100
-            #Salvando métricas pra plotagem
+
+            # --- COLETA DE MÉTRICAS DE HARDWARE E ESTRUTURA ---
+            # 1. Uso de RAM Física (RSS) em Megabytes via psutil
+            ram_usage = self.process.memory_info().rss / (1024 ** 2)
+            
+            gpu_util = 0
+            gpu_mem = 0
+            # 2. Uso de GPU NVIDIA (se disponível via NVML)
+            if HAS_NVML:
+                try:
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                    gpu_util = util.gpu  # Porcentagem de uso do processador
+                    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    gpu_mem = mem_info.used / (1024 ** 2)  # VRAM em MB
+                except Exception:
+                    # Falha silenciosa se houver erro na leitura dos sensores da GPU
+                    pass
+
+            # 3. Mapeamento das camadas ativas (essencial para analisar o impacto do PLD)
+            # Se não houver camadas ativas definidas (PLD off), assume o padrão de 12 camadas
+            layers_used = active_layers if active_layers is not None else list(range(1, 13))
+            num_layers = len(layers_used)
+
+            # 4. Consumo de Energia Acumulado (kWh) via CodeCarbon
+            # O flush() sincroniza os dados capturados pelos samplers de energia
+            self.tracker.flush()
+            energy_kwh = getattr(self.tracker._total_energy, "kwh", 0.0)
+            # --- FIM DA COLETA DE MÉTRICAS ---
+
+            # Armazenamento das métricas expandidas no histórico da rodada
             self.history.append({
                 "epoch": epoch + 1,
                 "train_time_cum": self.total_train_time,
                 "loss": metrics['total_loss'],
                 "accuracy": eval_acc,
                 "memo": memo,
-                "gen": gen_gap
+                "gen": gen_gap,
+                "ram_mb": float(ram_usage),
+                "gpu_util_pct": float(gpu_util),
+                "gpu_mem_mb": float(gpu_mem),
+                "layers_active": layers_used,
+                "num_layers_active": num_layers,
+                "energy_kwh": float(energy_kwh)
             })
 
             self.scheduler.step()

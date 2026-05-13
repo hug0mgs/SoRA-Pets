@@ -16,7 +16,7 @@ from transformers import CLIPModel, CLIPProcessor
 
 from sora import SoRAWrappedLinear, SparseAdamW
 
-DEFAULT_CONFIG_PATH = Path("config/train_config.yml")
+DEFAULT_CONFIG_PATH = Path("src/config/train_config.yml")
 VALID_LORA_MODES = {"with_lora-pld", "with_lora", "without_lora", "both", "with_sora_no_schedule", "with_sora-pld_schedule"}
 SORA_MODES = {"with_sora_no_schedule", "with_sora-pld_schedule"}
 LORA_MODES = ["with_lora", "with_lora-pld"] #Adicionando o modo LoRA-PLD
@@ -281,7 +281,7 @@ def patch_clip_encoder_for_pld(vision_model, pld_limit, upper_k=None):
                 active_layers = getattr(encoder, '_pld_active_layers', None)
 
                 # 1. COEXISTÊNCIA PaCA + PLD:
-                # Se a camada NÃO é PaCA (congelada), ela é DROPADA permanentemente durante o treino
+                # Se a camada NÃO é PaCA (congelada), ela é DROPADA permanentemente durante o treino e avaliação
                 if not getattr(self_layer, '_is_paca_layer', True) and active_layers is not None:
                     hidden_states = args[0] if len(args) > 0 else kwargs.get('hidden_states')
                     if kwargs.get('output_attentions', False):
@@ -537,7 +537,7 @@ def train_epoch(model, loader, optimizer, active_layers, sparse_optimizer=None, 
         if sparse_optimizer is not None:
             sparse_optimizer.zero_grad()
 
-        outputs = model(pixel_values=pixel_values, labels=labels)# active_layers=active_layers)
+        outputs = model(pixel_values=pixel_values, labels=labels, active_layers=active_layers)
         ce_loss = outputs["loss"]
         loss = ce_loss
         with torch.no_grad():

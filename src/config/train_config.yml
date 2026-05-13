@@ -16,7 +16,7 @@ model:
       - out_proj
   paca:                     # ← NOVO
     enabled: true
-    upper_layers: null        # últimas 6 camadas do encoder (de 12 no ViT-B)
+    upper_layers: 6     # últimas 6 camadas do encoder (de 12 no ViT-B)
     # upper_layers: null    # se quiser desabilitar
   pld:
     enabled: true
@@ -32,10 +32,10 @@ model:
   
 training:
   batch_size: 32
-  epochs: 1
+  epochs: 10
   test_size: 0.2
   seed: 42
-  repetitions: 3
+  repetitions: 1
 
 optimizer:
   lr: 0.0005
